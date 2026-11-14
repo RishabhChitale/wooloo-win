@@ -8,7 +8,7 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 
 ## Tauri commands (frontend invoke(), all async, never block on a dead machine)
 - list_machines() -> Machine[]        Machine {id, label, kind:"local"|"ssh", ssh_target?, session?}
-- add_machine({label, ssh_target, session?}) -> Machine
+- add_machine({label, ssh_target, session?}) -> Machine   // args are snake_case (unlike the other commands, which use camelCase keys). Machine also has optional `pipe_path` (local Windows API pipe override, set in machines.toml)
 - remove_machine(id)
 - reconnect_machine(id)
 - open_space(machine_id, workspace_id)       // subscribe terminal endpoint for that Space's selected tab
@@ -25,7 +25,8 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - "snapshot"        {machine_id, workspaces:[{id,label,category?,tabs:[{id,label,panes:[{id,...}]}], agent_state?}], ...}  (JSON passed through from herdr session.snapshot, lightly normalised)
 - "surface"         {machine_id, tab_id, panes:[{pane_id, x,y,cols,rows, cursor:{x,y,visible,shape}, rows_data:[Cell[]] | patch}] }
   Cell = {ch:string, fg:[r,g,b]|null, bg:[r,g,b]|null, bold,italic,underline,inverse,wide}
-  Rust decoder keeps the full grid and emits full grids per pane (frontend simple) with a dirty-row list: {dirty_rows:number[]}.
+  Per pane: `cursor` is always present ({x,y,visible,shape:string}; shape "block" for 0, "other" otherwise, pane-local coords). `rows_data` is the pane's full grid (rows of Cell[], one Cell per column). `dirty_rows` is per pane (pane-local row indices that changed; absent/empty on a full surface). There is no top-level dirty_rows.
+  Wide cells: a double-width glyph appears in column c as a Cell with wide:true and ch = the glyph; column c+1 is a spacer Cell with ch:"" (empty), wide:false. Rows keep one Cell per column, so indices stay aligned. Renderers draw the glyph across two columns and draw nothing for the spacer. (Verified on a real stream: fixtures frame_007, test wide_cell_is_followed_by_empty_spacer.) Note `wide` comes from a codepoint-range check, not from the wire.
 Exact field names may be refined by the core pawn; if changed, update this file in the same commit.
 
 Note (frontend): `scroll(machine_id, pane_id, lines)` — positive `lines` = toward older output (wheel up), negative = toward newer.

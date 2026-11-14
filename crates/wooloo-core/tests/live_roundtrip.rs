@@ -11,7 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 async fn roundtrip() {
     let Ok(session) = std::env::var("WOOLOO_TEST_SESSION") else { return };
     assert_ne!(session, "wooloo", "refusing to touch the real session");
-    let m = Machine { id: "t".into(), label: "t".into(), kind: MachineKind::Local, ssh_target: None, session: Some(session) };
+    let m = Machine { id: "t".into(), label: "t".into(), kind: MachineKind::Local, ssh_target: None, session: Some(session), pipe_path: None };
     let t = for_machine(&m).unwrap();
 
     let mut api = ApiClient::new(t.connect(Channel::Api).await.unwrap());

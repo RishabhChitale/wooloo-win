@@ -58,3 +58,23 @@ fn frame_roundtrip() {
     assert_eq!(out, vec![b"abc".to_vec(), b"de".to_vec()]);
     assert_eq!(buf, vec![9, 0]);
 }
+
+/// Frame 7 carries the `printf` line with "中文". A wide cell is followed by exactly one cell with an
+/// EMPTY symbol (not skip), so columns stay aligned with the grid.
+#[test]
+fn wide_cell_is_followed_by_empty_spacer() {
+    use wooloo_core::surface::out_cell;
+    let mut d = Decoder::new();
+    for i in 0..=7 {
+        d.apply(&payload(i)).unwrap_or_else(|e| panic!("frame {i}: {e}"));
+    }
+    let sf = d.surface.unwrap();
+    let i = sf.cells.iter().position(|c| c.symbol == "中").expect("wide char in fixture");
+    assert_eq!(sf.cells[i + 1].symbol, "", "spacer after wide cell");
+    assert!(!sf.cells[i + 1].skip);
+    assert_eq!(sf.cells[i + 2].symbol, "文");
+    assert_eq!(sf.cells[i + 3].symbol, "");
+    let (w, sp) = (out_cell(&sf.cells[i]), out_cell(&sf.cells[i + 1]));
+    assert!(w.wide && w.ch == "中");
+    assert!(!sp.wide && sp.ch.is_empty());
+}

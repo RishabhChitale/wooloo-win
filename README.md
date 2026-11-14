@@ -22,6 +22,7 @@ Nothing here has been run on a real Windows machine or against a second Herdr ho
 - The NSIS installer builds, installs and launches.
 - SSH attach to a Mac Herdr server and to a Windows Herdr server (OpenSSH Server setup above).
 - Herdr remote bridge behaviour and protocol compatibility across Herdr versions.
+- Local Windows named-pipe endpoint. Derived from the herdr source (`\\.\pipe\` + the socket file path under `%APPDATA%\herdr`, `-client` for the binary channel), but the docs do not state it and it has not been tried on a real server. If it fails, set `pipe_path` on the machine in `machines.toml` to the full API socket path (for example `C:\Users\me\AppData\Roaming\herdr\herdr.sock`); debug herdr builds use `herdr-dev` instead of `herdr`.
 - Keyboard encoding, paste, resize and scrolling in live terminals.
 - Two clients on one Space (size is last-active-wins per Herdr).
 - Reconnect behaviour after sleep or network loss.

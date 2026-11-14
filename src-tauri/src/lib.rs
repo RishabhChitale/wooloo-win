@@ -38,7 +38,7 @@ fn list_machines(app: State<App>) -> Vec<Machine> {
     app.file.lock().unwrap().machines.clone()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 fn add_machine(app: State<App>, label: String, ssh_target: String, session: Option<String>) -> Res<Machine> {
     let m = {
         let mut f = app.file.lock().unwrap();
@@ -140,8 +140,7 @@ fn forward(app: AppHandle, ev: Event) {
             app.emit("snapshot", json!({"machine_id": machine_id, "workspaces": workspaces}))
         }
         Event::Surface { machine_id, tab_id, panes } => {
-            let dirty: Vec<usize> = panes.iter().flat_map(|p| p.dirty_rows.iter().map(move |r| r + p.y)).collect();
-            app.emit("surface", json!({"machine_id": machine_id, "tab_id": tab_id, "panes": panes, "dirty_rows": dirty}))
+            app.emit("surface", json!({"machine_id": machine_id, "tab_id": tab_id, "panes": panes}))
         }
     };
 }

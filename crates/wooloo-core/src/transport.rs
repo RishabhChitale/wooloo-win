@@ -42,7 +42,7 @@ pub fn for_machine(m: &Machine) -> Result<Arc<dyn Transport>> {
             }
             #[cfg(windows)]
             {
-                Arc::new(PipeTransport { session: m.session.clone() })
+                Arc::new(PipeTransport { session: m.session.clone(), pipe_path: m.pipe_path.clone() })
             }
         }
         MachineKind::Ssh => Arc::new(SshTransport::new(
@@ -93,19 +93,41 @@ impl Transport for UnixTransport {
 
 // ---------------------------------------------------------------- Windows named pipe
 
-/// UNVERIFIED: Herdr's Windows beta docs do not document its endpoint. We guess
-/// `\\.\pipe\herdr-<session>` (API) and `\\.\pipe\herdr-<session>-client` (binary).
-pub fn pipe_name(session: &Option<String>, channel: Channel) -> String {
-    let s = session.as_deref().unwrap_or("default");
-    match channel {
-        Channel::Api => format!(r"\\.\pipe\herdr-{s}"),
-        Channel::Client => format!(r"\\.\pipe\herdr-{s}-client"),
-    }
+/// Herdr (src/platform/windows.rs) binds the pipe `\\.\pipe\` + the *socket file path* string, i.e.
+/// `\\.\pipe\C:\Users\me\AppData\Roaming\herdr\sessions\<s>\herdr.sock` (API) and `...\herdr-client.sock`
+/// (binary). The directory is `config_dir()` (src/config/io.rs): `$XDG_CONFIG_HOME\herdr`, else
+/// `%APPDATA%\herdr` (release builds; debug builds use `herdr-dev`). Read from the herdr source, not the
+/// docs; not yet exercised against a real Windows server (UNVERIFIED on hardware).
+/// `pipe_path` overrides the API socket path (client path derives `herdr.sock` -> `herdr-client.sock`).
+pub fn pipe_name(session: &Option<String>, channel: Channel, pipe_path: &Option<String>) -> String {
+    let api_path = match pipe_path {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => {
+            let base = std::env::var("XDG_CONFIG_HOME")
+                .map(|d| format!(r"{d}\herdr"))
+                .or_else(|_| std::env::var("APPDATA").map(|d| format!(r"{d}\herdr")))
+                .or_else(|_| std::env::var("USERPROFILE").map(|d| format!(r"{d}\AppData\Roaming\herdr")))
+                .unwrap_or_else(|_| r"C:\herdr".into());
+            match session.as_deref() {
+                Some(s) => format!(r"{base}\sessions\{s}\herdr.sock"),
+                None => format!(r"{base}\herdr.sock"),
+            }
+        }
+    };
+    let path = match channel {
+        Channel::Api => api_path,
+        Channel::Client => match api_path.strip_suffix(".sock") {
+            Some(stem) => format!("{stem}-client.sock"),
+            None => format!("{api_path}-client.sock"),
+        },
+    };
+    format!(r"\\.\pipe\{path}")
 }
 
 #[cfg(windows)]
 pub struct PipeTransport {
     pub session: Option<String>,
+    pub pipe_path: Option<String>,
 }
 
 #[cfg(windows)]
@@ -117,7 +139,7 @@ impl Transport for PipeTransport {
                 return Err(Error::Other("invalid session name".into()));
             }
         }
-        let name = pipe_name(&self.session, channel);
+        let name = pipe_name(&self.session, channel, &self.pipe_path);
         let c = tokio::net::windows::named_pipe::ClientOptions::new().open(&name)?;
         Ok(Box::new(c))
     }

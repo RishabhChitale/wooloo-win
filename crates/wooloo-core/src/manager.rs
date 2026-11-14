@@ -36,7 +36,7 @@ pub struct CursorOut {
     pub x: usize,
     pub y: usize,
     pub visible: bool,
-    pub shape: u8,
+    pub shape: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +47,7 @@ pub struct PaneSurface {
     pub cols: usize,
     pub rows: usize,
     pub focused: bool,
-    pub cursor: Option<CursorOut>,
+    pub cursor: CursorOut,
     pub rows_data: Vec<Vec<OutCell>>,
     pub dirty_rows: Vec<usize>,
 }
@@ -147,6 +147,13 @@ async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: Unbound
     }
 }
 
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 enum Exit {
     Stop,
     Reconnect,
@@ -175,19 +182,53 @@ async fn session(
     let mut focused_tab = snap.focused_tab_id.clone().unwrap_or_default();
     let _ = events.send(Event::Snapshot { machine_id: id.into(), workspaces: snap.workspaces.clone() });
     let mut workspaces = snap.workspaces;
+    // Dedicated reader task owns the API connection; the select! below only awaits the channel.
+    let (api_tx, mut api_rx) = tokio::sync::mpsc::channel::<Result<crate::api::Snapshot>>(8);
+    let api_task = AbortOnDrop(tokio::spawn(async move {
+        loop {
+            if let Err(e) = api.next_event().await {
+                let _ = api_tx.send(Err(e)).await;
+                return;
+            }
+            let r = api.snapshot().await;
+            let failed = r.is_err();
+            if api_tx.send(r).await.is_err() || failed {
+                return;
+            }
+        }
+    }));
 
     // Binary client endpoint.
     let client = tokio::time::timeout(HANDSHAKE, t.connect(Channel::Client))
         .await
         .map_err(|_| Error::Timeout("client connect"))??;
-    let (mut crd, mut cwr) = tokio::io::split(client);
+    let (crd_, mut cwr) = tokio::io::split(client);
     let (cw, ch) = CELL_PX;
     cwr.write_all(&surface::frame(&surface::hello(cw, ch, cfg.cols, cfg.rows))).await?;
     cwr.write_all(&surface::frame(&surface::focus(true))).await?;
 
+    let mut crd = crd_;
     let mut dec = Decoder::new();
-    let mut buf: Vec<u8> = Vec::new();
-    let mut chunk = vec![0u8; 65536];
+    let (fr_tx, mut fr_rx) = tokio::sync::mpsc::channel::<Result<Vec<Vec<u8>>>>(64);
+    let _frame_task = AbortOnDrop(tokio::spawn(async move {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut chunk = vec![0u8; 65536];
+        loop {
+            let r: Result<Vec<Vec<u8>>> = match crd.read(&mut chunk).await {
+                Ok(0) => Err(Error::protocol("client endpoint closed")),
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    surface::drain_frames(&mut buf)
+                }
+                Err(e) => Err(e.into()),
+            };
+            let stop = r.is_err();
+            if fr_tx.send(r).await.is_err() || stop {
+                return;
+            }
+        }
+    }));
+    let _keep = &api_task;
     let mut welcomed = false;
     let started = Instant::now();
     let mut last_rx = Instant::now();
@@ -196,12 +237,10 @@ async fn session(
 
     loop {
         tokio::select! {
-            n = crd.read(&mut chunk) => {
-                let n = n?;
-                if n == 0 { return Err(Error::protocol("client endpoint closed")); }
+            frames = fr_rx.recv() => {
+                let frames = frames.ok_or_else(|| Error::protocol("reader stopped"))??;
                 last_rx = Instant::now();
-                buf.extend_from_slice(&chunk[..n]);
-                for f in surface::drain_frames(&mut buf)? {
+                for f in frames {
                     match dec.apply(&f) {
                         Ok(Frame::Full) => {
                             emit_surface(events, id, &focused_tab, dec.surface.as_ref().unwrap(), None);
@@ -222,10 +261,9 @@ async fn session(
                     }
                 }
             }
-            ev = api.next_event() => {
-                ev?;
-                // Any change event: re-fetch the snapshot.
-                let snap = api.snapshot().await?;
+            snap = api_rx.recv() => {
+                // Any change event made the reader task re-fetch the snapshot.
+                let snap = snap.ok_or_else(|| Error::protocol("api reader stopped"))??;
                 if let Some(ft) = snap.focused_tab_id { focused_tab = ft; }
                 workspaces = snap.workspaces;
                 let _ = events.send(Event::Snapshot { machine_id: id.into(), workspaces: workspaces.clone() });
@@ -329,7 +367,8 @@ pub fn pane_surfaces(sf: &Surface, dirty: Option<&[usize]>) -> Vec<PaneSurface> 
                 Some(d) => d.iter().filter(|&&y| y >= r.y && y < r.y + r.h).map(|y| y - r.y).collect(),
             };
             let cursor = sf.cursor.filter(|c| p.focused && c.x >= r.x && c.x < r.x + r.w && c.y >= r.y && c.y < r.y + r.h)
-                .map(|c| CursorOut { x: c.x - r.x, y: c.y - r.y, visible: c.visible, shape: c.shape });
+                .map(|c| CursorOut { x: c.x - r.x, y: c.y - r.y, visible: c.visible, shape: if c.shape == 0 { "block" } else { "other" } })
+                .unwrap_or(CursorOut { x: 0, y: 0, visible: false, shape: "block" });
             PaneSurface { pane_id: p.id.clone(), x: r.x, y: r.y, cols: r.w, rows: r.h, focused: p.focused, cursor, rows_data, dirty_rows }
         })
         .collect()

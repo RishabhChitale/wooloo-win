@@ -21,6 +21,10 @@ pub struct Machine {
     /// Herdr session name; `None` = the default session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// Local Windows only: full path of the API socket file whose name Herdr turns into a pipe
+    /// (`\\.\pipe\<path>`), e.g. `C:\Users\me\AppData\Roaming\herdr\herdr.sock`. Overrides the derived path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipe_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +95,7 @@ impl MachinesFile {
                 kind: MachineKind::Local,
                 ssh_target: None,
                 session: None,
+                pipe_path: None,
             }],
         }
     }
@@ -102,6 +107,7 @@ impl MachinesFile {
             kind: MachineKind::Ssh,
             ssh_target: Some(ssh_target),
             session: session.filter(|s| !s.is_empty()),
+            pipe_path: None,
         };
         m.validate()?;
         self.machines.push(m.clone());
