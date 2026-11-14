@@ -75,3 +75,11 @@ jobs:
         run: |
           herdr --session "$WOOLOO_TEST_SESSION" server stop || true
           herdr session delete "$WOOLOO_TEST_SESSION" || true
+
+  peer-dispatch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Peer dispatcher tests
+        shell: powershell
+        run: powershell -NoProfile -File tests/peer-dispatch.tests.ps1
