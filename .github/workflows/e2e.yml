@@ -18,5 +18,7 @@ jobs:
           curl -fsSL https://herdr.dev/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/herdr" --version
+      - uses: dtolnay/rust-toolchain@stable   # wooloo-sync replica scenario in scripts/e2e-peer.sh
+      - uses: Swatinem/rust-cache@v2
       - name: Peer e2e (two throwaway Herdr sessions)
         run: scripts/e2e-peer.sh
