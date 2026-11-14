@@ -34,3 +34,38 @@ jobs:
       - run: pnpm test
       - run: cargo test --workspace
       - run: cargo check -p wooloo --manifest-path src-tauri/Cargo.toml
+
+  live:
+    needs: test
+    runs-on: macos-latest
+    continue-on-error: false
+    env:
+      WOOLOO_TEST_SESSION: wooloo-win-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The installer cannot pin a version (installs the latest release); we only log it.
+      - name: Install Herdr
+        run: |
+          curl -fsSL https://herdr.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/herdr" --version
+      - name: Start throwaway Herdr server
+        run: |
+          nohup herdr --session "$WOOLOO_TEST_SESSION" server > "$RUNNER_TEMP/herdr-server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if herdr --session "$WOOLOO_TEST_SESSION" workspace create --cwd "$PWD" --label ci; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/herdr-server.log" || true
+          exit 1
+      - name: Live round-trip test
+        run: cargo test -p wooloo-core -- --ignored
+      - name: Stop Herdr server
+        if: always()
+        run: |
+          herdr --session "$WOOLOO_TEST_SESSION" server stop || true
+          herdr session delete "$WOOLOO_TEST_SESSION" || true
