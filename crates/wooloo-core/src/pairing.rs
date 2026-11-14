@@ -182,11 +182,11 @@ pub fn merge_authorized_keys(existing: &str, peer: &str, line: &str) -> (String,
     let marker = format!("peer-dispatch.ps1 -Peer {peer}");
     let mut out: Vec<&str> = Vec::new();
     for l in existing.lines() {
-        if l.contains(&marker) && l.starts_with("command=") {
-            continue;
-        }
         if l == line {
             return (existing.to_string(), false);
+        }
+        if l.contains(&marker) && l.starts_with("command=") {
+            continue;
         }
         if !blob.is_empty() && l.ends_with(blob) && !l.starts_with("command=") {
             // the same key already has an unrestricted entry: leave it exactly as it was
