@@ -1,16 +1,24 @@
 # wooloo-win
 
-A Windows (and macOS-buildable) Tauri client for [Herdr](https://herdr.dev). It attaches over SSH to Herdr servers on your machines (for example a Mac and a Windows PC), lists their Spaces grouped by machine, and shows live terminals. Each machine runs its own Herdr server; this app is a client for any of them. Inspired by the Swift macOS wooloo app.
+A Windows (and macOS-buildable) Tauri client for [Herdr](https://herdr.dev). Each of your machines runs its own Herdr server and hosts its own Spaces. wooloo-win attaches over SSH to those servers (for example a Mac and a Windows PC), lists their Spaces grouped by machine and shows live terminals. It pairs with the Swift macOS wooloo fork as a peer over Tailscale + SSH, with no cloud service, and replicates wooloo's own Space metadata (names, categories, colours, order, notes, pinned tabs) between the two apps.
+
+See `docs/ARCHITECTURE.md` for the diagram, pairing flow, threat model, conflict policy and the list of unverified items.
+
+## How it fits together
+
+- Transport: Tailscale (private tailnet) + the SSH both machines already run. No new listener, no cloud.
+- Access control: a paired peer's key is limited by a forced command and `restrict` to a dispatcher that matches each request against the exact allow-list in `docs/peer-allowlist.json`. It cannot get a shell.
+- Sync: `crates/wooloo-sync`, hybrid-logical-clock last-writer-wins per field (`docs/sync-protocol.md`, `docs/sync-vectors.json`). Never carries secrets or terminal scrollback.
+- Real-PC test checklist: `docs/PC-TEST.md`.
 
 ## Setup
 
 1. Install [Tailscale](https://tailscale.com) on both machines and sign in to the same tailnet.
 2. Install the **same Herdr version** on both machines. On Windows, in PowerShell:
    `irm https://herdr.dev/install.ps1 | iex`
-3. Enable the **OpenSSH Client** on Windows (Settings > System > Optional features).
-4. To **host from the PC**: enable the **OpenSSH Server** optional feature, start the `sshd` service (set it to Automatic), and allow inbound TCP 22 in Windows Firewall (ideally only on the Tailscale interface/network):
-   `New-NetFirewallRule -Name sshd -DisplayName "OpenSSH Server" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow`
-5. In wooloo, **add a machine** by its SSH target (e.g. `user@my-mac` using its Tailscale name). Keys and auth stay with OpenSSH.
+3. Windows PC: install OpenSSH Server and a Tailscale-only firewall rule as in `docs/windows-openssh-setup.md` (run as admin). Mac: turn on Remote Login.
+4. Install wooloo-win from the GitHub release (below), then use **Pair device** on both apps and compare the fingerprints. Steps: `docs/ARCHITECTURE.md`. Mac side: the Mac doc `docs/peer-pairing.md` in the wooloo fork.
+5. You can also add a machine by hand by its SSH target (e.g. `user@my-mac`, its Tailscale name). Keys and auth stay with OpenSSH.
 
 ## Installing the release
 
