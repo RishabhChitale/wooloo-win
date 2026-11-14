@@ -86,3 +86,11 @@ jobs:
       - name: Allow-list drift check
         shell: bash
         run: python scripts/check-allowlist-drift.py
+
+  vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p wooloo-sync --test vectors
