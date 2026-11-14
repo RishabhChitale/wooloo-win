@@ -32,5 +32,5 @@ jobs:
           releaseName: wooloo for Windows ${{ github.ref_name }}
           releaseBody: Unsigned NSIS installer. Windows SmartScreen will warn; choose More info, then Run anyway.
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: --bundles nsis
