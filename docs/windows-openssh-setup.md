@@ -67,4 +67,4 @@ request: it matches it against a fixed list (`wooloo-peer hello|api S|client S|c
 
 Written against the Mac design doc without Herdr's exact preparation-probe strings or a real Windows run:
 Herdr 0.9.5 request strings, multi-line `SSH_ORIGINAL_COMMAND` through Windows sshd, and the effect of `restrict`
-(no PTY) on the bridges. Conform the dispatcher once the shared `peer-allowlist.json` exists.
+(no PTY) on the bridges. The dispatcher follows the shared `docs/peer-allowlist.json` (19 exact templates); `scripts/check-allowlist-drift.py` keeps its embedded copy in sync.
