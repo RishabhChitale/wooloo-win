@@ -158,6 +158,7 @@ function reportViewport() {
 new ResizeObserver(() => reportViewport()).observe(panesEl);
 
 $("add").addEventListener("click", () => dlg.showModal());
+import("./pair").then((m) => m.initPair(dlg, (m2) => { if (!machines.some((x) => x.id === m2.id)) machines.push(m2); renderRail(); }));
 $("cancel").addEventListener("click", () => dlg.close());
 $<HTMLFormElement>("addform").addEventListener("submit", (e) => {
   const f = e.target as HTMLFormElement;

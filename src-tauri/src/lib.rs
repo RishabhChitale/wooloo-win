@@ -1,4 +1,5 @@
 //! Thin Tauri glue over wooloo-core. Commands and events follow INTERFACE.md.
+mod pair;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -173,7 +174,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_machines, add_machine, remove_machine, reconnect_machine, open_space, select_tab,
-            focus_pane, send_key, send_paste, resize_viewport, scroll
+            focus_pane, send_key, send_paste, resize_viewport, scroll,
+            pair::pair_local_info, pair::pair_review, pair::pair_accept
         ])
         .run(tauri::generate_context!())
         .expect("error while running wooloo");
