@@ -4,12 +4,15 @@ import { categoryLineColors } from "./theme";
 import { CATEGORY_TITLES, groupSpaces } from "./grouping";
 import { clipboardShortcut, mapKeyEvent } from "./keys";
 import { measureCell, PaneView } from "./terminal";
-import type { Machine, MachineStatus, Snapshot, SurfaceEvent } from "./types";
+import { applyMeta, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
+import { compareHerdrVersions } from "./version-skew";
+import { CATEGORY_ORDER } from "./grouping";
+import type { Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus } from "./types";
 
 const app = document.getElementById("app")!;
 app.innerHTML = `
   <aside id="rail"><div class="rail-head"><span>MACHINES</span><button id="add" title="Add machine">+ Add</button></div><div id="machines"></div></aside>
-  <main id="main"><div id="tabs"></div><div id="panes" tabindex="0"><div id="placeholder">Select a Space</div></div></main>
+  <main id="main"><div id="skew" hidden></div><div id="tabs"></div><div id="work"><div id="panes" tabindex="0"><div id="placeholder">Select a Space</div></div><aside id="notes" hidden></aside></div></main>
   <dialog id="dlg"><form method="dialog" id="addform">
     <strong>Add machine</strong>
     <label>Label</label><input name="label" required placeholder="Work PC">
@@ -22,6 +25,9 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const machinesEl = $("machines"), tabsEl = $("tabs"), panesEl = $("panes"), dlg = $<HTMLDialogElement>("dlg");
 
 let api: Api;
+let metas: SpaceMeta[] = [];
+let syncRows: SyncStatus[] = [];
+let notesOpen = false;
 let machines: Machine[] = [];
 const status = new Map<string, MachineStatus>();
 const snaps = new Map<string, Snapshot>();
@@ -50,7 +56,13 @@ function renderRail() {
       renderRail();
     });
     machinesEl.appendChild(row);
-    const spaces = snaps.get(m.id)?.workspaces ?? [];
+    const sy = syncRows.find((r) => r.machine_id === m.id);
+    if (sy) {
+      const b = document.createElement("div"); b.className = `sync-badge ${sy.state}`; b.textContent = syncBadge(sy); b.title = "Click to sync now";
+      b.addEventListener("click", () => fire(api.syncNow()));
+      machinesEl.appendChild(b);
+    }
+    const spaces = applyMeta(m.id, snaps.get(m.id)?.workspaces ?? [], metas);
     if (!spaces.length) {
       const e = document.createElement("div"); e.className = "empty";
       e.textContent = st?.state === "failed" ? "unreachable" : st?.state === "connecting" ? "connecting…" : "no spaces";
@@ -63,19 +75,116 @@ function renderRail() {
       for (const w of g.spaces) {
         const s = document.createElement("div");
         s.className = "space" + (selMachine === m.id && selSpace === w.id ? " active" : "");
-        s.innerHTML = `<span>${esc(w.label)}</span>${w.agent_state ? `<span class="agent" title="agent ${esc(w.agent_state)}">&#9679;</span>` : ""}`;
+        s.draggable = !!w.uuid;
+        if (w.color) s.style.borderLeft = `3px solid ${w.color}`;
+        const pres = presenceLabel(w.presence);
+        s.innerHTML = `<span class="name">${esc(w.label)}</span>${pres ? `<span class="presence" title="${esc(pres)}">${esc(pres)}</span>` : ""}${w.agent_state ? `<span class="agent" title="agent ${esc(w.agent_state)}">&#9679;</span>` : ""}`;
         s.addEventListener("click", () => {
           selMachine = m.id; selSpace = w.id; selTab = w.tabs[0]?.id ?? null; focusedPane = null;
           fire(api.openSpace(m.id, w.id));
           renderRail(); renderMain(); reportViewport();
         });
+        wireSpaceRow(s, m.id, w, g.spaces);
         machinesEl.appendChild(s);
       }
     }
   }
 }
 
-function currentSpace() { return snaps.get(selMachine ?? "")?.workspaces.find((w) => w.id === selSpace); }
+function currentSpace(): DisplaySpace | undefined {
+  return selMachine ? applyMeta(selMachine, snaps.get(selMachine)?.workspaces ?? [], metas).find((w) => w.id === selSpace) : undefined;
+}
+
+const patch = (mid: string, w: DisplaySpace, p: Parameters<Api["setSpaceMeta"]>[2]) => {
+  // A Space without a mapped uuid has no metadata yet: never write (protocol 4.1).
+  if (!w.uuid) return;
+  fire(api.setSpaceMeta(mid, w.id, p));
+};
+
+/** Rename (double-click), colour/category menu (context menu) and drag reorder within the category group. */
+function wireSpaceRow(el: HTMLElement, mid: string, w: DisplaySpace, group: DisplaySpace[]) {
+  el.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    if (!w.uuid) return;
+    const name = el.querySelector(".name") as HTMLElement;
+    const inp = document.createElement("input"); inp.className = "rename"; inp.value = w.label; inp.maxLength = 200;
+    name.replaceWith(inp); inp.focus(); inp.select();
+    let done = false;
+    const finish = (save: boolean) => {
+      if (done) return; done = true;
+      const v = inp.value.trim();
+      if (save && v !== w.label && validName(v)) patch(mid, w, { name: v });
+      renderRail();
+    };
+    inp.addEventListener("keydown", (k) => { k.stopPropagation(); if (k.key === "Enter") finish(true); else if (k.key === "Escape") finish(false); });
+    inp.addEventListener("blur", () => finish(true));
+    inp.addEventListener("click", (c) => c.stopPropagation());
+  });
+  el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (w.uuid) openMenu(e.clientX, e.clientY, mid, w); });
+  el.addEventListener("dragstart", (e) => { e.dataTransfer?.setData("text/plain", w.id); e.dataTransfer!.effectAllowed = "move"; el.classList.add("dragging"); });
+  el.addEventListener("dragend", () => el.classList.remove("dragging"));
+  el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
+  el.addEventListener("dragleave", () => el.classList.remove("drop"));
+  el.addEventListener("drop", (e) => {
+    e.preventDefault(); el.classList.remove("drop");
+    const from = group.findIndex((x) => x.id === e.dataTransfer?.getData("text/plain"));
+    const to = group.findIndex((x) => x.id === w.id);
+    if (from < 0 || to < 0 || from === to) return;
+    patch(mid, group[from], { order: moveOrder(group.map((x) => x.order), from, to) });
+  });
+}
+
+const menuEl = document.createElement("div"); menuEl.id = "menu"; menuEl.hidden = true; document.body.appendChild(menuEl);
+document.addEventListener("click", () => { menuEl.hidden = true; });
+function openMenu(x: number, y: number, mid: string, w: DisplaySpace) {
+  menuEl.replaceChildren();
+  const sw = document.createElement("div"); sw.className = "swatches";
+  for (const c of [null, ...PALETTE]) {
+    const b = document.createElement("button"); b.className = "swatch"; b.title = c ?? "no colour";
+    b.style.background = c ?? "transparent"; if (!c) b.textContent = "\u2715";
+    b.addEventListener("click", () => { if (c === null || isHexColor(c)) patch(mid, w, { color: c }); });
+    sw.appendChild(b);
+  }
+  const cats = document.createElement("div"); cats.className = "cats";
+  for (const c of [null, ...CATEGORY_ORDER]) {
+    const b = document.createElement("button"); b.textContent = c === null ? "Automatic" : CATEGORY_TITLES[c];
+    b.addEventListener("click", () => patch(mid, w, { category: c }));
+    cats.appendChild(b);
+  }
+  menuEl.append(sw, cats);
+  menuEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`; menuEl.style.top = `${Math.min(y, window.innerHeight - 260)}px`;
+  menuEl.hidden = false;
+}
+
+const skewEl = document.getElementById("skew")!;
+function renderSkew() {
+  const worst = syncRows.map((r) => (r.local_herdr_version && r.peer_herdr_version ? { r, v: compareHerdrVersions(r.local_herdr_version, r.peer_herdr_version) } : null))
+    .filter((x): x is NonNullable<typeof x> => !!x && x.v.severity !== "none" && !x.v.ok)
+    .sort((a, b) => (a.v.severity === "error" ? 0 : 1) - (b.v.severity === "error" ? 0 : 1))[0];
+  skewEl.hidden = !worst;
+  if (worst) { skewEl.className = worst.v.severity; skewEl.textContent = `${worst.r.peer_label}: ${worst.v.message}`; }
+}
+
+const notesEl = document.getElementById("notes")!;
+let notesFor = "";
+function renderNotes() {
+  const w = currentSpace();
+  notesEl.hidden = !(notesOpen && w);
+  if (notesEl.hidden || !w) return;
+  const id = `${selMachine}|${w.id}`;
+  const ta = notesEl.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (ta && notesFor === id) { if (document.activeElement !== ta) ta.value = w.notes ?? ""; return; }
+  notesFor = id;
+  notesEl.innerHTML = `<div class="notes-head">Notes <span id="notes-info"></span></div><textarea placeholder="Notes sync to your other machine. Do not paste secrets here."${w.uuid ? "" : " disabled"}></textarea>`;
+  const t = notesEl.querySelector("textarea")!; t.value = w.notes ?? "";
+  const info = notesEl.querySelector("#notes-info") as HTMLElement;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  t.addEventListener("input", () => {
+    const ok = validNotes(t.value); info.textContent = ok ? "" : "too long or has control characters"; t.classList.toggle("bad", !ok);
+    clearTimeout(timer);
+    if (ok) timer = setTimeout(() => { const cur = currentSpace(); if (cur && `${selMachine}|${cur.id}` === id) patch(selMachine!, cur, { notes: t.value === "" ? null : t.value }); }, 600);
+  });
+}
 
 function renderMain() {
   tabsEl.replaceChildren();
@@ -86,6 +195,12 @@ function renderMain() {
     el.addEventListener("click", () => { selTab = t.id; fire(api.selectTab(selMachine!, t.id)); renderMain(); });
     tabsEl.appendChild(el);
   }
+  if (ws) {
+    const nb = document.createElement("button"); nb.id = "notes-btn"; nb.textContent = notesOpen ? "Hide notes" : "Notes";
+    nb.addEventListener("click", () => { notesOpen = !notesOpen; renderMain(); reportViewport(); });
+    tabsEl.appendChild(nb);
+  }
+  renderNotes();
   renderPanes();
 }
 
@@ -181,6 +296,11 @@ function esc(s: string) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
     surfaces.set(skey(ev.machine_id, ev.tab_id), ev);
     if (ev.machine_id === selMachine && ev.tab_id === selTab) renderPanes();
   });
+  await api.onMeta((m) => { metas = m; renderRail(); renderNotes(); if (selSpace) renderMain(); });
+  await api.onSyncStatus((r) => { syncRows = r; renderRail(); renderSkew(); });
   machines = await api.listMachines();
+  api.getMeta().then((m) => { metas = m; renderRail(); }).catch((e) => console.warn("get_meta failed", e));
+  api.syncStatus().then((r) => { syncRows = r; renderRail(); renderSkew(); }).catch((e) => console.warn("sync_status failed", e));
+  setInterval(renderRail, 5000); // refresh the "2s ago" age text
   renderRail();
 })();

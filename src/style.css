@@ -38,3 +38,20 @@ dialog label { display: block; font-size: 12px; color: var(--sub); margin: 10px 
 dialog input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--surface1); border-radius: 4px; padding: 6px 8px; font: inherit; }
 dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 dialog .primary { background: var(--accent); color: #11111B; }
+.sync-badge { margin: 0 12px 2px 28px; font-size: 11px; color: var(--sub); cursor: pointer; }
+.sync-badge.offline { color: var(--amber); } .sync-badge.syncing { color: var(--accent); }
+.space .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space .presence { font-size: 10px; color: var(--over); }
+.space.dragging { opacity: .4; } .space.drop { box-shadow: inset 0 2px 0 var(--accent); }
+.space input.rename { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 3px; font: inherit; padding: 1px 4px; }
+#menu { position: fixed; z-index: 10; background: var(--panel); border: 1px solid var(--surface1); border-radius: 6px; padding: 8px; width: 190px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+#menu .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+#menu .swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--surface1); padding: 0; font-size: 10px; }
+#menu .cats { display: flex; flex-direction: column; } #menu .cats button { text-align: left; }
+#skew { padding: 6px 12px; font-size: 12px; } #skew.warn { background: #4a4126; color: var(--amber); } #skew.error { background: #4a2633; color: var(--red); }
+#work { flex: 1; display: flex; min-height: 0; }
+#notes { width: 280px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--sel); }
+#notes .notes-head { padding: 8px 12px; font-size: 11px; letter-spacing: .08em; color: var(--over); } #notes-info { color: var(--red); margin-left: 6px; }
+#notes textarea { flex: 1; resize: none; background: var(--bg); color: var(--text); border: 0; padding: 10px 12px; font: 13px/1.4 "Segoe UI", system-ui, sans-serif; outline: none; }
+#notes textarea.bad { box-shadow: inset 0 0 0 1px var(--red); }
+#notes-btn { margin-left: auto; align-self: center; margin-right: 8px; }

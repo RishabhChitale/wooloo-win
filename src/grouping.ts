@@ -46,11 +46,11 @@ export function categoryOf(ws: Pick<Workspace, "label" | "category">): CategoryI
   return parseCategory(ws.category) ?? automaticCategory(ws.label);
 }
 
-export interface CategoryGroup { category: CategoryId; title: string; spaces: Workspace[] }
+export interface CategoryGroup<T extends Workspace = Workspace> { category: CategoryId; title: string; spaces: T[] }
 
 /** Non-empty groups in category order; each keeps the input (Herdr) order of its Spaces. */
-export function groupSpaces(spaces: Workspace[]): CategoryGroup[] {
-  const buckets = new Map<CategoryId, Workspace[]>();
+export function groupSpaces<T extends Workspace>(spaces: T[]): CategoryGroup<T>[] {
+  const buckets = new Map<CategoryId, T[]>();
   for (const s of spaces) {
     const c = categoryOf(s);
     const list = buckets.get(c) ?? [];

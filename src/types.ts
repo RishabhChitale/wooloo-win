@@ -20,6 +20,8 @@ export interface MachineStatus {
 export interface PaneRef { id: string; [k: string]: unknown }
 export interface Tab { id: string; label: string; panes: PaneRef[] }
 export interface Workspace {
+  /** Machines (labels) that have this Space attached; optional snapshot field. */
+  presence?: string[];
   id: string;
   label: string;
   category?: string;
@@ -57,3 +59,36 @@ export interface KeyInput {
 }
 
 export type Unlisten = () => void;
+
+// ---- Synced context (frontend side of the Tauri commands set_space_meta / get_meta / sync_now / sync_status).
+// Mirrors docs/sync-protocol.md section 4.1. Until INTERFACE.md carries the final spec this is the assumed shape.
+/** Replicated Space metadata, already merged (LWW) by the Rust side. `machine_id` + `herdr_id` locate the workspace. */
+export interface SpaceMeta {
+  uuid: string;
+  machine_id: string;
+  herdr_id: string;
+  name: string;
+  category: string | null;
+  color: string | null;
+  order: number;
+  notes: string | null;
+  deleted?: boolean;
+}
+/** Fields the UI may write; `null` clears category/color/notes. */
+export interface SpaceMetaPatch {
+  name?: string;
+  category?: string | null;
+  color?: string | null;
+  order?: number;
+  notes?: string | null;
+}
+/** Per paired machine. */
+export interface SyncStatus {
+  machine_id: string;
+  peer_label: string;
+  state: "synced" | "syncing" | "offline";
+  last_sync_secs_ago?: number;
+  pending: number;
+  local_herdr_version?: string;
+  peer_herdr_version?: string;
+}

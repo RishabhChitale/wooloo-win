@@ -1,4 +1,4 @@
-import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, SurfaceEvent, Unlisten } from "./types";
+import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, SpaceMeta, SpaceMetaPatch, SurfaceEvent, SyncStatus, Unlisten } from "./types";
 
 // Thin wrapper over Tauri invoke/listen (INTERFACE.md). Outside Tauri (pnpm dev in a browser)
 // a mock backend emits fake machines/spaces/surfaces so the UI works without Rust.
@@ -15,6 +15,13 @@ export interface Api {
   sendPaste(machineId: string, paneId: string, text: string): Promise<void>;
   resizeViewport(machineId: string, cols: number, rows: number): Promise<void>;
   scroll(machineId: string, paneId: string, lines: number): Promise<void>;
+  // Synced context (probopass adds the Rust side; shapes assumed in types.ts).
+  getMeta(): Promise<SpaceMeta[]>;
+  setSpaceMeta(machineId: string, herdrId: string, patch: SpaceMetaPatch): Promise<SpaceMeta>;
+  syncNow(): Promise<void>;
+  syncStatus(): Promise<SyncStatus[]>;
+  onMeta(cb: (m: SpaceMeta[]) => void): Promise<Unlisten>;
+  onSyncStatus(cb: (s: SyncStatus[]) => void): Promise<Unlisten>;
   onMachineStatus(cb: (s: MachineStatus) => void): Promise<Unlisten>;
   onSnapshot(cb: (s: Snapshot) => void): Promise<Unlisten>;
   onSurface(cb: (s: SurfaceEvent) => void): Promise<Unlisten>;
@@ -49,6 +56,12 @@ async function createTauriApi(): Promise<Api> {
     sendPaste: (machineId, paneId, text) => invoke("send_paste", { machineId, paneId, text }),
     resizeViewport: (machineId, cols, rows) => invoke("resize_viewport", { machineId, cols, rows }),
     scroll: (machineId, paneId, lines) => invoke("scroll", { machineId, paneId, lines }),
+    getMeta: async () => snakeKeys(await invoke("get_meta")) as SpaceMeta[],
+    setSpaceMeta: async (machineId, herdrId, patch) => snakeKeys(await invoke("set_space_meta", { machineId, herdrId, patch })) as SpaceMeta,
+    syncNow: () => invoke("sync_now"),
+    syncStatus: async () => snakeKeys(await invoke("sync_status")) as SyncStatus[],
+    onMeta: on<SpaceMeta[]>("meta"),
+    onSyncStatus: on<SyncStatus[]>("sync-status"),
     onMachineStatus: on<MachineStatus>("machine-status"),
     onSnapshot: on<Snapshot>("snapshot"),
     onSurface: on<SurfaceEvent>("surface"),
@@ -67,6 +80,8 @@ type Listeners = {
   status: Set<(s: MachineStatus) => void>;
   snap: Set<(s: Snapshot) => void>;
   surf: Set<(s: SurfaceEvent) => void>;
+  meta: Set<(m: SpaceMeta[]) => void>;
+  sync: Set<(s: SyncStatus[]) => void>;
 };
 
 const blank = (): Cell => ({ ch: " ", fg: null, bg: null, bold: false, italic: false, underline: false, inverse: false, wide: false });
@@ -84,25 +99,25 @@ function writeText(grid: Cell[][], x: number, y: number, text: string, over: Par
 }
 
 export function createMockApi(): Api {
-  const L: Listeners = { status: new Set(), snap: new Set(), surf: new Set() };
+  const L: Listeners = { status: new Set(), snap: new Set(), surf: new Set(), meta: new Set(), sync: new Set() };
   const machines: Machine[] = [
     { id: "local", label: "This PC", kind: "local" },
     { id: "mac", label: "Mac (tailscale)", kind: "ssh", ssh_target: "rishabh@mac", session: "main" },
     { id: "dead", label: "Old laptop", kind: "ssh", ssh_target: "me@old-laptop" },
   ];
-  const mkWs = (id: string, label: string, tabs: [string, string[]][], category?: string) => ({
-    id, label, category, agent_state: id.endsWith("1") ? "working" : undefined,
+  const mkWs = (id: string, label: string, tabs: [string, string[]][], category?: string, presence: string[] = []) => ({
+    id, label, category, presence, agent_state: id.endsWith("1") ? "working" : undefined,
     tabs: tabs.map(([tid, panes]) => ({ id: tid, label: tid.replace(/^t-/, ""), panes: panes.map((p) => ({ id: p })) })),
   });
   const snaps: Record<string, Snapshot> = {
     local: { machine_id: "local", workspaces: [
-      mkWs("w1", "wooloo-win", [["t-shell", ["p1", "p2"]], ["t-build", ["p3"]]], "claude"),
-      mkWs("w2", "Study Central", [["t-notes", ["p4"]]]),
+      mkWs("w1", "wooloo-win", [["t-shell", ["p1", "p2"]], ["t-build", ["p3"]]], "claude", ["PC", "Mac"]),
+      mkWs("w2", "Study Central", [["t-notes", ["p4"]]], undefined, ["PC"]),
       mkWs("w3", "options-trading", [["t-algo", ["p5"]]]),
       mkWs("w4", "scratch", [["t-main", ["p6"]]]),
     ] },
     mac: { machine_id: "mac", workspaces: [
-      mkWs("m1", "Marquee player", [["t-dev", ["q1", "q2"]]]),
+      mkWs("m1", "Marquee player", [["t-dev", ["q1", "q2"]]], undefined, ["Mac"]),
       mkWs("m2", "Budget digest", [["t-cron", ["q3"]]], "finance"),
     ] },
     dead: { machine_id: "dead", workspaces: [] },
@@ -112,6 +127,18 @@ export function createMockApi(): Api {
     mac: { machine_id: "mac", state: "connecting", reason: "ssh handshake" },
     dead: { machine_id: "dead", state: "failed", reason: "ssh: connect to host old-laptop port 22: timed out", retry_in_secs: 30 },
   };
+  const uuid = (m: string, h: string) => `mock-${m}-${h}`;
+  const metas: SpaceMeta[] = [];
+  for (const [mid, sn] of Object.entries(snaps)) sn.workspaces.forEach((w, i) => metas.push({
+    uuid: uuid(mid, w.id), machine_id: mid, herdr_id: w.id, name: w.label, category: w.category ?? null, color: null, order: i, notes: null,
+  }));
+  let lastSync = Date.now() - 2000, pending = 0, offline = false;
+  const syncRows = (): SyncStatus[] => [{
+    machine_id: "mac", peer_label: "Mac", state: offline ? "offline" : "synced",
+    last_sync_secs_ago: Math.max(0, (Date.now() - lastSync) / 1000), pending,
+    local_herdr_version: "0.5.3", peer_herdr_version: "0.5.1",
+  }];
+  const emitMeta = () => L.meta.forEach((f) => f(metas.slice()));
   const typed: Record<string, string> = {};
   const viewport = { cols: 120, rows: 36 };
   const current = new Map<string, string>(); // machine -> tab id
@@ -210,6 +237,24 @@ export function createMockApi(): Api {
     sendPaste: async (mid, pane, text) => { typed[pane] = (typed[pane] ?? "") + text.replace(/\r?\n/g, " "); const tab = current.get(mid); if (tab) emitSurface(mid, tab); },
     resizeViewport: async (mid, cols, rows) => { viewport.cols = cols; viewport.rows = rows; const tab = current.get(mid); if (tab) emitSurface(mid, tab); },
     scroll: async (mid, pane, lines) => { scrollOff[pane] = Math.max(0, (scrollOff[pane] ?? 0) + lines); const tab = current.get(mid); if (tab) emitSurface(mid, tab); },
+    getMeta: async () => metas.slice(),
+    setSpaceMeta: async (mid, hid, patch) => {
+      let m = metas.find((x) => x.machine_id === mid && x.herdr_id === hid);
+      if (!m) {
+        const w = snaps[mid]?.workspaces.find((x) => x.id === hid);
+        if (!w) throw new Error("unknown space");
+        m = { uuid: uuid(mid, hid), machine_id: mid, herdr_id: hid, name: w.label, category: w.category ?? null, color: null, order: metas.length, notes: null };
+        metas.push(m);
+      }
+      Object.assign(m, patch);
+      if (offline) pending++; else lastSync = Date.now();
+      emitMeta();
+      return { ...m };
+    },
+    syncNow: async () => { offline = false; pending = 0; lastSync = Date.now(); L.sync.forEach((f) => f(syncRows())); },
+    syncStatus: async () => syncRows(),
+    onMeta: (cb) => reg(L.meta, cb, () => cb(metas.slice())),
+    onSyncStatus: (cb) => reg(L.sync, cb, () => cb(syncRows())),
     onMachineStatus: (cb) => reg(L.status, cb, () => Object.values(status).forEach(cb)),
     onSnapshot: (cb) => reg(L.snap, cb, () => Object.keys(snaps).forEach((id) => { if (status[id].state !== "failed") emitSnap(id); })),
     onSurface: (cb) => reg(L.surf, cb),
