@@ -1,33 +1,53 @@
 #!/usr/bin/env python3
-"""Fail if docs/peer-allowlist.json and resources/peer-dispatch.ps1 disagree."""
-import json, re, sys, pathlib
+"""Keep docs/peer-allowlist.json (vendored from the Mac repo) and the blob embedded in
+resources/peer-dispatch.ps1 identical. `--write` regenerates the embedded blob.
+Also compares with the Mac copy when it is present locally."""
+import json, pathlib, re, sys
+
 root = pathlib.Path(__file__).resolve().parent.parent
-al = json.loads((root / "docs/peer-allowlist.json").read_text())
-src = (root / "resources/peer-dispatch.ps1").read_text()
+doc = root / "docs/peer-allowlist.json"
+ps1 = root / "resources/peer-dispatch.ps1"
+RX = re.compile(r"(\$alJson = @'\n)(.*?)(\n'@\n)", re.S)
+
+
+def slim(al):
+    return {
+        "marker": al["marker"],
+        "markerPrefix": al["markerPrefix"],
+        "entries": [{k: e[k] for k in ("name", "transport", "template")} for e in al["entries"]],
+    }
+
+
+al = json.loads(doc.read_text())
+want = slim(al)
+src = ps1.read_text()
+m = RX.search(src)
+if not m:
+    sys.exit("embedded allow-list block not found in peer-dispatch.ps1")
+blob = json.dumps(want, separators=(",", ":"), ensure_ascii=True)
+if "'@" in blob:
+    sys.exit("blob would end the here-string")
+
+if "--write" in sys.argv:
+    ps1.write_text(src[: m.start(2)] + blob + src[m.end(2):])
+    print("embedded allow-list written")
+    sys.exit(0)
+
 errs = []
+try:
+    have = json.loads(m.group(2))
+except ValueError as e:
+    have = None
+    errs.append(f"embedded blob is not JSON: {e}")
+if have is not None and have != want:
+    names_a = [e["name"] for e in want["entries"]]
+    names_b = [e["name"] for e in have.get("entries", [])]
+    errs.append(f"embedded blob differs from docs/peer-allowlist.json (vendored {len(names_a)} entries, embedded {len(names_b)}); run scripts/check-allowlist-drift.py --write")
 
-verbs = set(re.findall(r"remote-[a-z]+-bridge", src))
-if verbs != set(al["bridgeVerbs"]):
-    errs.append(f"bridge verbs: dispatcher {sorted(verbs)} vs list {sorted(al['bridgeVerbs'])}")
-flags = set(re.findall(r"--(?:idle-timeout-v1|check)\b", src))
-if flags != set(al["bridgeFlags"]):
-    errs.append(f"flags: dispatcher {sorted(flags)} vs list {sorted(al['bridgeFlags'])}")
-m = re.search(r"wooloo-peer \(([a-z|]+)\)", src)
-short = set(m.group(1).split("|")) | {"hello"} if m else set()
-if short != set(al["shortForms"]):
-    errs.append(f"short forms: dispatcher {sorted(short)} vs list {sorted(al['shortForms'])}")
-if al["readyMarker"] not in src:
-    errs.append("ready marker missing from dispatcher")
-if not re.search(rf"exit {al['denyExitCode']}\b", src):
-    errs.append("deny exit code missing from dispatcher")
-
-# If the Mac repo's copy is present locally, the vendored copy must equal it.
 mac = pathlib.Path.home() / "Claude/wooloo-peer-wt/docs/peer-allowlist.json"
-if mac.exists():
-    macj = json.loads(mac.read_text())
-    if {k: v for k, v in macj.items() if not k.startswith("_")} != {k: v for k, v in al.items() if not k.startswith("_")}:
-        errs.append(f"vendored copy differs from {mac}")
+if mac.exists() and json.loads(mac.read_text()) != al:
+    errs.append(f"vendored copy differs from {mac}")
 
 if errs:
     print("allow-list drift:\n  " + "\n  ".join(errs)); sys.exit(1)
-print("allow-list in sync")
+print(f"allow-list in sync ({len(want['entries'])} entries)")
