@@ -3,6 +3,7 @@ import { batchRow, effectiveColors } from "./runs";
 import { clipboardShortcut, mapKeyEvent, type KeyEventLike } from "./keys";
 import { automaticCategory, groupSpaces, parseCategory } from "./grouping";
 import { isSelected, normalizeSel, selectionText } from "./selection";
+import { snakeKeys } from "./api";
 import type { Cell, Workspace } from "./types";
 
 const cell = (ch: string, o: Partial<Cell> = {}): Cell =>
@@ -25,6 +26,17 @@ describe("batchRow", () => {
     const r = batchRow([cell("日", { wide: true }), cell(""), cell("x")], DF, DB);
     expect(r).toHaveLength(1);
     expect(r[0]).toMatchObject({ cells: 3, text: "日x", hasWide: true });
+  });
+  it("handles wide cells with the spacer absent without double-advancing", () => {
+    const withSpacer = batchRow([cell("日", { wide: true }), cell(""), cell("x"), cell("y", { bold: true })], DF, DB);
+    const noSpacer = batchRow([cell("日", { wide: true }), cell("x"), cell("y", { bold: true })], DF, DB);
+    expect(noSpacer).toEqual(withSpacer);
+    expect(noSpacer.map((r) => r.col)).toEqual([0, 3]);
+    expect(noSpacer[0]).toMatchObject({ cells: 3, text: "日x" });
+  });
+  it("keeps an empty cell after a non-wide cell as a blank column", () => {
+    const r = batchRow([cell("a"), cell(""), cell("b")], DF, DB);
+    expect(r[0]).toMatchObject({ cells: 3, text: "a b" });
   });
   it("resolves inverse", () => {
     const r = batchRow([cell("a", { inverse: true, fg: [9, 9, 9] })], DF, DB);
@@ -104,5 +116,12 @@ describe("selection", () => {
   it("extracts text, trimming trailing blanks", () => {
     const rows = [row("abc   "), row("def   ")];
     expect(selectionText(rows, { x: 1, y: 0 }, { x: 1, y: 1 })).toBe("bc\nde");
+  });
+});
+
+describe("snakeKeys", () => {
+  it("normalises camelCase event payload keys and leaves snake_case alone", () => {
+    expect(snakeKeys({ machineId: "m", tabId: "t", panes: [{ paneId: "p", rowsData: [[{ ch: "a" }]], dirty_rows: [1] }] }))
+      .toEqual({ machine_id: "m", tab_id: "t", panes: [{ pane_id: "p", rows_data: [[{ ch: "a" }]], dirty_rows: [1] }] });
   });
 });

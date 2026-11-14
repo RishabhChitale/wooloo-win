@@ -22,11 +22,21 @@ export interface Api {
 
 export const inTauri = (): boolean => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+const toSnake = (k: string) => k.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
+export function snakeKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(snakeKeys);
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [toSnake(k), snakeKeys(x)]));
+  }
+  return v;
+}
+
 async function createTauriApi(): Promise<Api> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
+  // Event payloads follow INTERFACE.md (snake_case). Normalise camelCase keys too, so either serde setting works.
   const on = <T>(name: string) => async (cb: (p: T) => void): Promise<Unlisten> =>
-    listen<T>(name, (e) => cb(e.payload));
+    listen<unknown>(name, (e) => cb(snakeKeys(e.payload) as T));
   return {
     listMachines: () => invoke("list_machines"),
     addMachine: (m) => invoke("add_machine", m),

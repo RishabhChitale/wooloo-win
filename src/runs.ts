@@ -29,23 +29,24 @@ export function effectiveColors(c: Cell, defFg: RGB, defBg: RGB): { fg: RGB | nu
 export function batchRow(row: Cell[], defFg: RGB, defBg: RGB): Run[] {
   const runs: Run[] = [];
   let cur: Run | null = null;
-  let prevWide = false;
-  for (let x = 0; x < row.length; x++) {
-    const c = row[x];
-    if (prevWide && c.ch === "" && !c.wide) { prevWide = false; continue; }
-    prevWide = c.wide;
+  let col = 0; // grid column; advances by 2 after a wide cell whether or not a spacer cell follows
+  for (let i = 0; i < row.length; i++) {
+    const c = row[i];
     const { fg, bg } = effectiveColors(c, defFg, defBg);
     const width = c.wide ? 2 : 1;
     const text = c.ch === "" ? " " : c.ch;
-    if (cur && cur.col + cur.cells === x && sameRgb(cur.fg, fg) && sameRgb(cur.bg, bg)
+    if (cur && cur.col + cur.cells === col && sameRgb(cur.fg, fg) && sameRgb(cur.bg, bg)
         && cur.bold === c.bold && cur.italic === c.italic && cur.underline === c.underline) {
       cur.text += text;
       cur.cells += width;
       cur.hasWide ||= c.wide;
     } else {
-      cur = { col: x, cells: width, text, fg, bg, bold: c.bold, italic: c.italic, underline: c.underline, hasWide: c.wide };
+      cur = { col, cells: width, text, fg, bg, bold: c.bold, italic: c.italic, underline: c.underline, hasWide: c.wide };
       runs.push(cur);
     }
+    col += width;
+    // Spacer convention: an empty-ch, non-wide cell right after a wide cell is its second column. Skip it.
+    if (c.wide && i + 1 < row.length && row[i + 1].ch === "" && !row[i + 1].wide) i++;
   }
   return runs;
 }
