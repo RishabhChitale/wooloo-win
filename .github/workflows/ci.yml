@@ -64,6 +64,12 @@ jobs:
           exit 1
       - name: Live round-trip test
         run: cargo test -p wooloo-core -- --ignored
+      - name: Dump herdr logs
+        if: failure()
+        run: |
+          for f in "$HOME"/.config/herdr/sessions/"$WOOLOO_TEST_SESSION"/*.log "$RUNNER_TEMP/herdr-server.log"; do
+            echo "=== $f"; tail -n 200 "$f" || true
+          done
       - name: Stop Herdr server
         if: always()
         run: |

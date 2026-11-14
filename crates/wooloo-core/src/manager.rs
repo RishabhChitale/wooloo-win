@@ -172,13 +172,18 @@ async fn session(
     cfg: &mut ViewState,
     connected: &mut bool,
 ) -> Result<Exit> {
-    // JSON API: subscribe first, then snapshot.
-    let api_stream = tokio::time::timeout(HANDSHAKE, t.connect(Channel::Api))
+    // JSON API: a subscribed connection is event-only (the server closes it on any other request),
+    // so events use one connection and snapshots/requests a second one. Subscribe first, then snapshot.
+    let ev_stream = tokio::time::timeout(HANDSHAKE, t.connect(Channel::Api))
         .await
-        .map_err(|_| Error::Timeout("api connect"))??;
-    let mut api = ApiClient::new(api_stream);
-    api.subscribe().await?;
-    let snap = api.snapshot().await?;
+        .map_err(|_| Error::Timeout("api events connect"))??;
+    let mut api = ApiClient::new(ev_stream);
+    api.subscribe().await.map_err(|e| Error::protocol(format!("events.subscribe: {e}")))?;
+    let req_stream = tokio::time::timeout(HANDSHAKE, t.connect(Channel::Api))
+        .await
+        .map_err(|_| Error::Timeout("api request connect"))??;
+    let mut req = ApiClient::new(req_stream);
+    let snap = req.snapshot().await.map_err(|e| Error::protocol(format!("session.snapshot: {e}")))?;
     let mut focused_tab = snap.focused_tab_id.clone().unwrap_or_default();
     let _ = events.send(Event::Snapshot { machine_id: id.into(), workspaces: snap.workspaces.clone() });
     let mut workspaces = snap.workspaces;
@@ -190,7 +195,7 @@ async fn session(
                 let _ = api_tx.send(Err(e)).await;
                 return;
             }
-            let r = api.snapshot().await;
+            let r = req.snapshot().await;
             let failed = r.is_err();
             if api_tx.send(r).await.is_err() || failed {
                 return;
