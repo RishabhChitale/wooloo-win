@@ -13,5 +13,5 @@
     "windows": [{ "title": "wooloo", "width": 1280, "height": 800, "minWidth": 640, "minHeight": 400 }],
     "security": { "csp": null }
   },
-  "bundle": { "active": true, "resources": ["resources/peer-dispatch.ps1"], "targets": "all", "icon": ["icons/icon.ico", "icons/icon.png"] }
+  "bundle": { "active": true, "resources": {"../resources/peer-dispatch.ps1": "resources/peer-dispatch.ps1"}, "targets": "all", "icon": ["icons/icon.ico", "icons/icon.png"] }
 }

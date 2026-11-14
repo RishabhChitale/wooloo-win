@@ -15,7 +15,7 @@ $fails = 0
 function Run([string]$req, [string]$peer = 'studio-mac') {
     $env:SSH_ORIGINAL_COMMAND = $req
     $o = Join-Path $tmp 'out.txt'; $e = Join-Path $tmp 'err.txt'
-    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', $peer, '-Herdr', $fake) `
+    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', ('"' + $peer + '"'), '-Herdr', $fake) `
         -Wait -PassThru -NoNewWindow -RedirectStandardOutput $o -RedirectStandardError $e
     [pscustomobject]@{ Code = $p.ExitCode; Out = (Get-Content $o -Raw); Err = (Get-Content $e -Raw) }
 }

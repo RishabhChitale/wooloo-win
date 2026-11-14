@@ -13,7 +13,7 @@ function Deny([string]$why) {
     exit 64
 }
 
-if ($Peer -notmatch '^[a-z0-9-]{1,32}$') { Deny 'bad peer name' }
+if ($Peer -cnotmatch '^[a-z0-9-]{1,32}$') { Deny 'bad peer name' }
 
 $req = $env:SSH_ORIGINAL_COMMAND
 if ([string]::IsNullOrEmpty($req)) { Deny 'empty request' }

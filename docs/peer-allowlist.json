@@ -1,0 +1,8 @@
+{
+  "_note": "Vendored copy of the shared peer allow-list. Source of truth: wooloo Mac repo docs/peer-allowlist.json (not yet published; this copy mirrors the Windows dispatcher). scripts/check-allowlist-drift.py keeps it and resources/peer-dispatch.ps1 in sync.",
+  "shortForms": ["hello", "api", "client", "check"],
+  "bridgeVerbs": ["remote-api-bridge", "remote-client-bridge"],
+  "bridgeFlags": ["--idle-timeout-v1", "--check"],
+  "readyMarker": "herdr-remote-output-ready:1",
+  "denyExitCode": 64
+}
