@@ -15,6 +15,15 @@ CI: `.github/workflows/e2e.yml` (macos-latest, on push to `main` and manual disp
 | send input / read back | `pane run` from one process and `pane read` from another round-trip terminal I/O. |
 | rename visible (<=2s) | Mutations by one client reach other clients of the same server. |
 | B independent of A | Sessions don't leak state into each other (no accidental shared state). |
+| build wooloo-sync CLI | The sync crate and its `wooloo-sync` binary compile (needs `cargo`; otherwise the whole replica scenario prints `SKIP`, as on the Mac without cargo). |
+| sync A->B (<=2s) | The real `wooloo-sync sync`/`exchange` protocol carries a Space name+category from replica A's unit-categories file into replica B's. |
+| rename on B reaches A (<=2s) | The reverse direction, including removal of the old name. |
+| partition, edit both, heal | Edits made on both replicas while no exchange runs converge to identical files after heal (LWW on conflict). |
+
+### Real vs simulated in the replica scenario
+
+- Real: two Herdr servers, the `wooloo-sync` binary and its exchange protocol, per-replica state and unit-category files.
+- Simulated: the SSH hop is a shim `ssh` on `PATH` that runs the remote command locally with that machine's state env (no sshd, no forced-command dispatcher, no allow-list check). The "app layer" that mirrors a Herdr Space label+category into the unit-categories file is the script's `set_cats`; the real apps do this themselves. The partition is "no exchange runs", not a network cut.
 
 ## NOT covered (need real two-machine runs)
 
@@ -22,7 +31,7 @@ CI: `.github/workflows/e2e.yml` (macos-latest, on push to `main` and manual disp
 - Tailscale connectivity, latency, NAT, and reconnect behavior.
 - Windows-side Herdr (named pipes/OpenSSH, see `windows-openssh-setup.md`).
 - Version skew between the two Herdr builds (see `src/version-skew.ts` for the pure check).
-- **Link kill / merge with the sync layer** (`crates/wooloo-sync`): partition the link
-  mid-edit on both sides, restore it, assert metadata converges. The script prints
-  `SKIP  TODO link-kill` / `link-merge` and has marked hook comments
-  (`TODO(link-kill)`, `TODO(link-merge)`) where `kill_link` and `assert_converged` go.
+- **A real link kill / merge**: the script only simulates a partition (see above). A real run
+  must cut Tailscale/SSH mid-exchange and mid-edit; `TODO(link-kill)` / `TODO(link-merge)`
+  comments in the script mark where.
+- The forced-command dispatcher and `docs/peer-allowlist.json` enforcement on `wooloo-sync exchange`.
