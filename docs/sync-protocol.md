@@ -1,0 +1,294 @@
+# wooloo-sync protocol v1 (shared Space metadata)
+
+Status: draft for M4. Reference implementation: `crates/wooloo-sync` (Rust).
+Test vectors: `docs/sync-vectors.json` (every implementation, including a later
+Swift one in the Mac app, must pass them).
+
+## 1. Goal and non-goals
+
+Each machine runs its own Herdr server and hosts its own Spaces. Both apps are
+clients of both servers. Herdr already shares the live terminals; what it does
+not share is wooloo's own metadata about Spaces. This protocol replicates that
+metadata between machines, both ways, with offline edits merging on reconnect.
+
+Replicated (and nothing else, see the allow-list in section 4):
+
+- per Space: name, category pin, colour, sidebar order, notes, pinned tabs,
+  hosting machine + Herdr workspace id, deleted flag;
+- the unit-state categories file (`~/.local/state/unit-space-categories.json`,
+  a flat `{ "<lowercased space name>": "<category>" }` map written by
+  `unit-space-purpose.sh`).
+
+Never replicated: secrets, keys, tokens, game art, terminal scrollback or
+surfaces, file paths, environment, Herdr config. Anything not in the allow-list
+is rejected on send AND on receive.
+
+No new daemon, no cloud, no new network listener. Transport is the SSH
+connection both apps already use for Herdr (over Tailscale).
+
+## 2. Data model
+
+The replicated document is a set of **registers**. A register is one field of
+one key:
+
+```json
+{"key":"space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11","field":"name",
+ "value":"Study Central","hlc":{"wall":1763112000000,"counter":0},"node":"mac-3f9a21c0"}
+```
+
+| member  | type | meaning |
+|---|---|---|
+| `key`   | string | entity, see section 4 |
+| `field` | string | attribute of that entity, see section 4 |
+| `value` | JSON   | the value; `null` means "cleared" (a field tombstone) |
+| `hlc`   | object | `{"wall": <u64 ms since Unix epoch>, "counter": <u64>}` |
+| `node`  | string | id of the machine that wrote this value |
+
+An **op** on the wire is exactly a register. The document is a map
+`(key, field) -> register`; it holds at most one register per pair.
+
+### 2.1 Node id
+
+Each machine picks a random node id once and stores it in its state file:
+`<os>-<8 lowercase hex>`, e.g. `mac-3f9a21c0`, `win-07be55d1`. Allowed
+pattern: 1-64 chars of `[a-z0-9-]`. It never contains a hostname, user name or
+anything secret.
+
+### 2.2 Hybrid logical clock (HLC)
+
+Each node keeps `last = (wall, counter)`, persisted in its state file.
+
+- **tick (local write)** with physical time `now` (ms):
+  if `now > last.wall` then `last = (now, 0)` else `last.counter += 1`.
+  The new `last` is the write's `hlc`.
+- **observe (accepted remote op)** with remote `r`:
+  if `(r.wall, r.counter) > (last.wall, last.counter)` then `last = r`.
+
+This keeps every local write strictly after everything the node has seen, even
+when its wall clock is behind a peer's.
+
+`(wall, counter)` pairs compare lexicographically.
+
+### 2.3 Last-writer-wins order
+
+Two registers for the same `(key, field)` are ordered by, in turn:
+
+1. `hlc.wall` (bigger wins)
+2. `hlc.counter` (bigger wins)
+3. `node`, compared as UTF-8 bytes (bigger wins)
+4. the value's canonical JSON text, compared as UTF-8 bytes (bigger wins)
+
+Step 4 only matters if one node reuses an HLC for two different values, which a
+correct node never does; it exists so even a buggy peer cannot make replicas
+diverge. Canonical JSON text: compact (no whitespace), object keys sorted,
+strings with only `"`, `\\` and characters below U+0020 escaped (`\n`, `\t`,
+`\r`, `\b`, `\f`, others as `\u00xx` lowercase hex), `/` NOT escaped, non-ASCII
+as raw UTF-8, numbers in shortest round-trip form. Allowed values are only null,
+booleans, numbers, strings and arrays of strings, so this is easy to produce.
+The test vectors exercise step 4 with string values only.
+
+### 2.4 Merge
+
+`apply(op)` on a replica:
+
+1. **validate** against the allow-list (section 4). Invalid: reject, do not
+   store, do not observe its clock.
+2. **skew guard**: if `op.hlc.wall > now + MAX_FUTURE_MS` (600000 ms = 10 min),
+   reject it as `future`. It is deferred, not lost: the sender keeps it and
+   resends it on every exchange until the receiver's clock catches up.
+3. **observe** the op's hlc (section 2.2).
+4. if there is no register for `(key, field)`, or the op is bigger in the order
+   of 2.3, store the op. If it is equal, it is a duplicate (no-op). If smaller,
+   ignore it.
+
+This merge is commutative, associative and idempotent per register, so replicas
+that have applied the same set of accepted ops hold identical documents in any
+order (the convergence property the tests check).
+
+## 3. Identity of Spaces across machines
+
+Herdr workspace ids (`w3`, ...) are per server, so they cannot identify a Space
+across machines. Every Space gets a **UUID** (lowercase v4, 8-4-4-4-12 hex),
+and the document key is `space:<uuid>`.
+
+The UUID is bound to the Herdr workspace through two replicated fields:
+`host` (node id of the machine whose Herdr server runs the Space) and
+`herdr_id` (the workspace id on that server).
+
+Rules (this avoids two clients minting two UUIDs for one workspace):
+
+- **Only the host mints.** A node creates `space:<uuid>` records only for
+  workspaces of its own Herdr server.
+- A client viewing a peer's server maps workspace `w` on peer node `P` to the
+  live Space with `host == P` and `herdr_id == w`. If none exists yet (the host
+  has not synced), the client shows the workspace with Herdr's label and no
+  metadata, and does not write metadata for it until the mapping exists.
+- **Host binding pass** (on start and whenever its workspace list changes),
+  for each local workspace `(id, label)`:
+  1. a live Space with `host == me` and `herdr_id == id`: bound;
+  2. else a live Space with `host == me` whose `herdr_id` is not a current
+     workspace and whose `name == label` (Herdr restarted and renumbered):
+     rebind by writing `herdr_id`;
+  3. else mint a new UUID and write `host`, `herdr_id`, `name`.
+  Step 1 runs over all workspaces before step 2 starts. Workspaces are taken in
+  Herdr's order, and when several Spaces qualify the one with the smallest UUID
+  (byte order) is used. Each Space binds to at most one workspace.
+  Live Spaces with `host == me` left unbound are returned as **orphans**; the
+  app tombstones them once it knows the workspace was closed (not merely that
+  Herdr is still starting).
+- Herdr is the source of truth for a hosted Space's label. The host writes a
+  `name` op when Herdr reports a rename, and renames the workspace in Herdr when
+  a newer `name` arrives by sync.
+
+## 4. Allow-list
+
+Anything else is invalid. Lengths are in Unicode scalar values unless marked
+bytes. "Text" means a string with no control characters (U+0000-U+001F,
+U+007F).
+
+### 4.1 `space:<uuid>`
+
+| field | value |
+|---|---|
+| `name` | text, 1-200 |
+| `category` | `null` or text, 1-64 (wooloo category pin, e.g. `claude`, `school`, `creative`, `finance`, `misc`; null = automatic) |
+| `color` | `null` or `"#rrggbb"` (lowercase hex) |
+| `order` | finite number (sidebar position; fractional values allowed so a move rewrites one field) |
+| `notes` | `null` or string, at most 65536 UTF-8 bytes; the only control characters allowed are `\n`, `\r`, `\t` |
+| `pinned_tabs` | `null` or array of at most 64 texts, each 1-200 (tab labels, not ids) |
+| `host` | node id (2.1) |
+| `herdr_id` | 1-64 chars of `[A-Za-z0-9_.:-]` |
+| `deleted` | boolean (Space tombstone) |
+
+### 4.2 `unitcat:<name>`
+
+`<name>` is the lowercased Space name exactly as in the unit-state file, text
+1-200.
+
+| field | value |
+|---|---|
+| `category` | `null` (entry removed) or text, 1-64 |
+
+## 5. Deletes and conflict policy
+
+- **Field clear**: write `null`. It is a normal register and wins or loses by
+  2.3 like any other value.
+- **Space delete**: write `deleted = true`, and in the same batch `notes = null`
+  and `pinned_tabs = null` so deleted content is not kept. A Space whose
+  `deleted` register is `true` is hidden. **Delete wins** over concurrent or
+  later field edits (they are stored but stay hidden). Only an explicit
+  `deleted = false` with a bigger HLC restores the Space.
+- **Unit category removal**: `unitcat:<name>.category = null`.
+- Tombstones are kept forever in v1 (they are a few dozen bytes each).
+- Concurrent edits of the same field: last writer wins (2.3); the other edit
+  is lost. Notes and `pinned_tabs` are whole-value registers, so two machines
+  editing the same Space's notes or pins while offline keep only the later
+  edit. Different fields of the same Space merge independently.
+- Clock skew: up to 10 min ahead is accepted (the HLC absorbs it). Beyond that,
+  ops are deferred (2.4). A peer whose clock is behind loses ties it would have
+  won by real time, which is accepted LWW behaviour.
+
+## 6. State file
+
+Path: `~/.config/wooloo-sync/state.json` on both macOS and Windows (`~` is
+`HOME`, or `USERPROFILE` on Windows). `WOOLOO_SYNC_STATE` overrides it. It is
+not inside the Herdr config dir, so Herdr never reads or rewrites it.
+
+```json
+{
+  "format": 1,
+  "node": "win-07be55d1",
+  "clock": {"wall": 1763112000000, "counter": 2},
+  "registers": [ <register>, ... ],
+  "local": {"unitcat_snapshot": {"study central": "school"}}
+}
+```
+
+- `registers` are written sorted by `(key, field)` (byte order).
+- On load, `clock` is raised to the largest hlc among the registers.
+- `local` is never sent to peers. `unitcat_snapshot` is the unit-state file as
+  last imported or exported, used for a three-way diff (section 7).
+- Writers take the lock file `state.json.lock` (create-exclusive; a lock older
+  than 30 s is stale and removed), re-read the file, apply their change,
+  write `state.json.tmp`, rename it over `state.json`, then remove the lock.
+
+## 7. Unit-state categories file
+
+The app (or the `wooloo-sync` CLI around an exchange) does:
+
+1. **import**: read the local unit-state file. If it is missing or unreadable,
+   do nothing. Otherwise diff it against `unitcat_snapshot`: entries added or
+   changed become `category` ops, entries removed become `null` ops. Then set
+   the snapshot to the file. Entries that would not be valid ops (name not text
+   1-200, value not text 1-64) are skipped on both sides of the diff. (A machine
+   without unit scripts therefore never deletes the other machine's entries.)
+2. **exchange** with the peer.
+3. **export**: build the map of all `unitcat:*` registers with non-null
+   values. If it differs from the file, write the file (temp + rename, sorted
+   keys, one-space indent like `unit-space-purpose.sh`) and set the snapshot to
+   it. If the file's directory does not exist, skip the write.
+
+The responder does the same import before applying the received ops and the
+same export after, so both machines' unit files take part.
+
+## 8. Exchange protocol
+
+Run as `ssh <peer> wooloo-sync exchange` (the peer runs the responder on
+stdin/stdout). Line-delimited JSON, UTF-8, one message per `\n`-terminated line,
+each message an object with a `t` member. Strictly ping-pong, so neither side
+writes a large payload while the other is also writing (no pipe deadlock).
+
+```
+initiator -> {"t":"hello","proto":1,"node":"win-07be55d1"}
+responder -> {"t":"hello","proto":1,"node":"mac-3f9a21c0"}
+initiator -> {"t":"op", <register members>}      (all registers, any order)
+initiator -> {"t":"end","count":<n ops sent>}
+responder    applies them, saves its state
+responder -> {"t":"op", ...}                      (its registers that differ from
+                                                   or are missing in what it received)
+responder -> {"t":"end","count":<n>,"accepted":<a>,"rejected":<r>}
+initiator    applies them, saves its state
+```
+
+- Either side may send `{"t":"error","msg":"..."}` instead of its next message
+  and close; the other side then commits nothing from this exchange.
+- `proto` mismatch: the responder answers with an error. Unknown members are
+  ignored; unknown `t` is an error.
+- A side commits (saves) only after it has received a complete `end` whose
+  `count` matches the ops read. An interrupted exchange is harmless: the next
+  one resends everything.
+- v1 sends the full document (it is small: tens of Spaces, a few KB, worst case
+  a few MB of notes). A later version may add a digest in `hello` to skip
+  unchanged documents; it must stay optional.
+- Responses are not echoed back further: one exchange makes both replicas equal
+  in their accepted ops (except ops deferred by the skew guard).
+- Max line length: 1 MiB (an op with 64 KB of notes fits easily). Longer lines
+  are an error.
+- A side may refuse an exchange of more than 200 000 ops (an error).
+- A peer whose `node` equals the receiver's own node id is refused (two
+  machines must never share a node id).
+
+## 9. Security notes
+
+- The responder only reads stdin, writes stdout, and touches its own state file
+  and the unit-state categories file (section 7). It takes no arguments from the
+  peer, executes nothing, and touches no other path.
+- Validation on receive means a compromised or buggy peer can at worst write
+  allow-listed metadata (names, notes, colours) into the document.
+- Notes are user text and can contain anything the user types; they are synced
+  by design. Do not paste secrets into Space notes.
+
+## 10. Test plan
+
+- `cargo test -p wooloo-sync` in CI (windows-latest and macos-latest):
+  HLC tick/observe, LWW order, validation, merge convergence over all
+  permutations of op sets, commutativity, idempotence, offline edits on two
+  replicas merged both ways, clock skew deferral, deletes and resurrection,
+  host binding, unit-category three-way import/export, exchange over in-memory
+  pipes (including error, proto mismatch and truncated stream), state file
+  round trip, and `docs/sync-vectors.json`.
+- A Swift implementation loads the same `docs/sync-vectors.json` and must
+  produce identical results.
+- Manual (after both apps ship): edit a Space's colour on the Mac offline,
+  its notes on Windows offline, reconnect, run one exchange, both show both
+  edits.

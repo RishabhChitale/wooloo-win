@@ -1,0 +1,10 @@
+[package]
+name = "wooloo-sync"
+description = "Replicated Space metadata between wooloo machines (docs/sync-protocol.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
