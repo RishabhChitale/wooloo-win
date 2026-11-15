@@ -194,7 +194,10 @@ function RunRawSync([byte[]]$payload) {
     [IO.File]::WriteAllBytes($raw, $payload)
     $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', '"studio-mac"', '-Herdr', $fake, '-Sync', $echoCmd) `
         -PassThru -NoNewWindow -RedirectStandardInput $raw -RedirectStandardOutput $o -RedirectStandardError $e
+    # Windows PowerShell 5.1 quirk: ExitCode reads empty unless the process handle was opened before it exited.
+    $null = $p.Handle
     $done = $p.WaitForExit(60000)
+    if ($done) { $p.WaitForExit() }   # flush the async stream state before reading ExitCode and the output files
     if (-not $done) { try { $p.Kill() } catch {} }
     [pscustomobject]@{ Done = $done; Code = $(if ($done) { $p.ExitCode } else { -1 }); Out = (Get-Content -Raw -LiteralPath $o); Err = (Get-Content -Raw -LiteralPath $e) }
 }
@@ -211,6 +214,7 @@ $raw = New-Object byte[] 1048577
 for ($k = 0; $k -lt 1048576; $k++) { $raw[$k] = 121 }
 $raw[1048576] = 10
 $r = RunRawSync $raw
+# Output is 'ECHO:' (5) + the line (1,048,576) + CRLF from the fake child's Write-Output (2) = 1,048,583 chars.
 $okOut = ($null -ne $r.Out) -and ($r.Out.Length -ge 1048576 + 5) -and $r.Out.StartsWith('ECHO:yyyy')
 Check 'sync: line at the cap passes' ($r.Done -and $r.Code -eq 0 -and $okOut)
 if (-not ($r.Done -and $r.Code -eq 0 -and $okOut)) { Write-Host "     exit $($r.Code) done=$($r.Done) outlen=$($r.Out.Length) err: $($r.Err)" }
