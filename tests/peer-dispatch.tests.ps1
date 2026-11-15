@@ -167,8 +167,9 @@ function StartSync([string]$syncExe) {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     # No BOM: a UTF-8 preamble from the child's stdin StreamWriter would add 3 bytes to the first line (seen in CI at
-    # the cap boundary). Not every runtime has the property, so ignore a failure to set it.
-    try { $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false) } catch {}
+    # the cap boundary). If the runtime lacks the property, say so loudly (the boundary tests do not depend on it).
+    try { $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false) }
+    catch { Write-Host 'harness: StandardInputEncoding unavailable' }
     [Diagnostics.Process]::Start($psi)
 }
 # lines are delivered one at a time while stdin stays open
@@ -185,34 +186,34 @@ $p.StandardInput.Close()
 $done = $p.WaitForExit(15000)
 Check 'sync: normal passthrough exits 0 after stdin closes' ($done -and $p.ExitCode -eq 0)
 if (-not $done) { try { $p.Kill() } catch {} }
-# a line over 1 MiB: exit 65 + message
-$p = StartSync $echoCmd
-$errT = $p.StandardError.ReadToEndAsync()
+# Cap-boundary cases: payload bytes go to a temp file and are fed with -RedirectStandardInput, so no StreamWriter (and
+# no BOM) can touch them. Always used for these cases; the harness also fails loudly if the BOM-free encoding is missing.
+function RunRawSync([byte[]]$payload) {
+    $env:SSH_ORIGINAL_COMMAND = 'wooloo-peer sync'
+    $raw = Join-Path $tmp 'sync-raw.bin'; $o = Join-Path $tmp 'sync-out.txt'; $e = Join-Path $tmp 'sync-err.txt'
+    [IO.File]::WriteAllBytes($raw, $payload)
+    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', '"studio-mac"', '-Herdr', $fake, '-Sync', $echoCmd) `
+        -PassThru -NoNewWindow -RedirectStandardInput $raw -RedirectStandardOutput $o -RedirectStandardError $e
+    $done = $p.WaitForExit(60000)
+    if (-not $done) { try { $p.Kill() } catch {} }
+    [pscustomobject]@{ Done = $done; Code = $(if ($done) { $p.ExitCode } else { -1 }); Out = (Get-Content -Raw -LiteralPath $o); Err = (Get-Content -Raw -LiteralPath $e) }
+}
+# a line over 1 MiB (1,048,577 bytes + LF): exit 65 + message
 $raw2 = New-Object byte[] 1048578
 for ($k = 0; $k -lt 1048577; $k++) { $raw2[$k] = 120 }
 $raw2[1048577] = 10
-try { $p.StandardInput.BaseStream.Write($raw2, 0, $raw2.Length); $p.StandardInput.BaseStream.Flush() } catch {}
-$done = $p.WaitForExit(30000)
-Check 'sync: line over 1 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
-Check 'sync: line over 1 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
-if (-not $done) { try { $p.Kill() } catch {} }
+$r = RunRawSync $raw2
+Check 'sync: line over 1 MiB -> exit 65' ($r.Done -and $r.Code -eq 65)
+Check 'sync: line over 1 MiB -> message' ($r.Err -like '*wooloo-peer-bridge: sync input over the size limit*')
 # a line of exactly 1,048,576 bytes (newline not counted) is at the cap and still passes
 # Mac rule (awk, LC_ALL=C): length of the line WITHOUT its newline, in bytes, > 1048576 is refused; ASCII so chars == bytes.
-# Read the output concurrently (started before writing) so the 1 MiB echo cannot fill the pipe and stall the write.
-$p = StartSync $echoCmd
-$out = $p.StandardOutput.ReadToEndAsync()
-$errT = $p.StandardError.ReadToEndAsync()
-# Raw bytes through BaseStream: Process.StandardInput is a StreamWriter that can prepend an encoding preamble (BOM),
-# which would add bytes to the line. Exactly 1048576 'y' bytes + 0x0A.
 $raw = New-Object byte[] 1048577
 for ($k = 0; $k -lt 1048576; $k++) { $raw[$k] = 121 }
 $raw[1048576] = 10
-$p.StandardInput.BaseStream.Write($raw, 0, $raw.Length); $p.StandardInput.BaseStream.Flush(); $p.StandardInput.Close()
-$done = $p.WaitForExit(60000)
-$okOut = $out.Wait(10000) -and ($out.Result.Length -ge 1048576 + 5) -and $out.Result.StartsWith('ECHO:yyyy')
-Check 'sync: line at the cap passes' ($done -and $p.ExitCode -eq 0 -and $okOut)
-if (-not ($done -and $p.ExitCode -eq 0 -and $okOut)) { Write-Host "     exit $($p.ExitCode) done=$done outlen=$($out.Result.Length) err: $($errT.Result)" }
-if (-not $done) { try { $p.Kill() } catch {} }
+$r = RunRawSync $raw
+$okOut = ($null -ne $r.Out) -and ($r.Out.Length -ge 1048576 + 5) -and $r.Out.StartsWith('ECHO:yyyy')
+Check 'sync: line at the cap passes' ($r.Done -and $r.Code -eq 0 -and $okOut)
+if (-not ($r.Done -and $r.Code -eq 0 -and $okOut)) { Write-Host "     exit $($r.Code) done=$($r.Done) outlen=$($r.Out.Length) err: $($r.Err)" }
 # total over 32 MiB made of many small lines: exit 65, earlier lines stay delivered
 $p = StartSync $echoCmd
 $errT = $p.StandardError.ReadToEndAsync()
