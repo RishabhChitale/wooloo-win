@@ -206,6 +206,23 @@ mod tests {
         assert!(!status_says_running(""));
     }
 
+    /// Real `herdr status server` output (Mac, herdr 0.9.5, exit 0).
+    const STATUS_RUNNING_0_9_5: &str =
+        "status: running\nversion: 0.9.5\nendpoint_compatible: yes\nprivate_protocol: 22\nprivate_protocol_compatible: yes\n";
+
+    #[test]
+    fn status_running_real_output_fixture() {
+        assert!(status_says_running(STATUS_RUNNING_0_9_5));
+    }
+
+    #[test]
+    fn status_not_running_cases() {
+        // Stopped-server text is not known verbatim; any output without `status: running` must be false.
+        assert!(!status_says_running(""));
+        assert!(!status_says_running("version: 0.9.5\nendpoint_compatible: yes\n"));
+        assert!(!status_says_running("herdr server is not running\n"));
+    }
+
     #[test]
     fn already_running_exit() {
         assert!(exit_says_already_running("Error: herdr server is Already Running (pid 3)"));
