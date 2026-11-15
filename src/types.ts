@@ -117,5 +117,5 @@ export interface SyncStatus {
 export interface MetaChanged { machine_id: string; source: "local" | "sync" }
 
 /** test_connection (INTERFACE.md): one hop of the connectivity check. */
-export interface DiagStep { step: "tailscale" | "tcp" | "ssh" | "bridge" | "reverse"; label: string; status: "ok" | "fail" | "skip"; detail: string }
+export interface DiagStep { step: "tailscale" | "route" | "tcp" | "ssh" | "bridge" | "reverse"; label: string; status: "ok" | "warn" | "fail" | "skip"; detail: string }
 export interface DiagReport { steps: DiagStep[]; ok: boolean; hint: string | null }

@@ -239,6 +239,9 @@ export function createMockApi(): Api {
       const steps: DiagReport["steps"] = [
         { step: "tailscale", label: "Tailscale ping", status: "ok", detail: "pong from 100.64.0.2 in 12ms" },
         id === "dead"
+          ? { step: "route", label: "Route to peer", status: "warn", detail: "via Mullvad, not the Tailscale adapter: a VPN/TUN adapter is capturing 100.64.0.0/10; exclude it from the VPN or pause it" }
+          : { step: "route", label: "Route to peer", status: "ok", detail: "via Tailscale" },
+        id === "dead"
           ? { step: "tcp", label: "TCP port 22", status: "fail", detail: "100.64.0.2:22: timed out after 5 s" }
           : { step: "tcp", label: "TCP port 22", status: "ok", detail: "connected to 100.64.0.2:22" },
       ];

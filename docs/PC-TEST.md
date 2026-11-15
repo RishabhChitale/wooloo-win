@@ -76,6 +76,8 @@ tailscale ping works but ssh times out (TCP 22 blocked while the Tailscale path 
   tailscale debug prefs | findstr /i ShieldsUp; fix tailscale set --shields-up=false.)
   First click "Test connection" (lightning icon on the Mac machine row): it shows which hop fails and,
   on a TCP 22 timeout, the reverse-direction command to run on the Mac.
+  On Windows it also reports the interface Windows routes the peer's Tailscale IP through (Find-NetRoute);
+  WARN means it is not the Tailscale adapter: a VPN/TUN adapter is capturing 100.64.0.0/10; exclude it from the VPN or pause it.
   Decision tree (PowerShell, in order, stop at the first that fails):
   1. PC -> itself:  Test-NetConnection 100.104.240.58 -Port 22
      RESULT SEEN (real PC): False. Firewall profiles Domain/Private/Public all

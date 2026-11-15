@@ -89,7 +89,7 @@ function connTestBox(id: string, ct: DiagReport | string): HTMLElement {
   } else {
     for (const s of ct.steps) {
       const l = document.createElement("div"); l.className = `conn-step ${s.status}`;
-      l.textContent = `${s.status === "ok" ? "ok" : s.status === "skip" ? "skip" : "FAIL"}  ${s.label}${s.detail ? ` - ${s.detail}` : ""}`; box.appendChild(l);
+      l.textContent = `${s.status === "ok" ? "ok" : s.status === "skip" ? "skip" : s.status === "warn" ? "WARN" : "FAIL"}  ${s.label}${s.detail ? ` - ${s.detail}` : ""}`; box.appendChild(l);
     }
     if (ct.hint) { const h = document.createElement("div"); h.className = "conn-hint"; h.textContent = ct.hint; box.appendChild(h); }
   }

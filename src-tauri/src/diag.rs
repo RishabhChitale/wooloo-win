@@ -14,10 +14,10 @@ use wooloo_core::transport::{split_target, Channel, SshTransport};
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct DiagStep {
-    /// "tailscale" | "tcp" | "ssh" | "bridge"
+    /// "tailscale" | "route" | "tcp" | "ssh" | "bridge" | "reverse"
     pub step: String,
     pub label: String,
-    /// "ok" | "fail" | "skip"
+    /// "ok" | "warn" | "fail" | "skip"
     pub status: String,
     pub detail: String,
 }
@@ -32,6 +32,7 @@ pub struct DiagReport {
 fn label_of(step: &str) -> &'static str {
     match step {
         "tailscale" => "Tailscale ping",
+        "route" => "Route to peer",
         "tcp" => "TCP port 22",
         "ssh" => "SSH login",
         "reverse" => "Reverse: peer to this device, TCP 22",
@@ -43,11 +44,26 @@ fn mk(step: &str, status: &str, detail: impl Into<String>) -> DiagStep {
     DiagStep { step: step.into(), label: label_of(step).into(), status: status.into(), detail: detail.into() }
 }
 
+pub const VPN_HINT: &str = "a VPN/TUN adapter is capturing 100.64.0.0/10; exclude it from the VPN or pause it";
+
+/// Judges which adapter carries traffic to the peer's Tailscale IP. Pure, so it is unit-tested.
+pub fn route_verdict(alias: &str) -> (&'static str, String) {
+    let a = alias.trim();
+    if a.is_empty() {
+        ("skip", "could not determine the route".into())
+    } else if a.to_lowercase().contains("tailscale") {
+        ("ok", format!("via {a}"))
+    } else {
+        ("warn", format!("via {a}, not the Tailscale adapter: {VPN_HINT}"))
+    }
+}
+
 /// Plain-language advice for a failed step.
 pub fn hint_for(step: &str, detail: &str) -> String {
     let d = detail.to_lowercase();
     match step {
         "tailscale" => "Tailscale cannot reach that device. Check that Tailscale is running and signed in on both devices, and that the device is awake.".into(),
+        "route" => VPN_HINT.into(),
         "tcp" => {
             if d.contains("refused") {
                 "Port 22 is closed on the other device: turn on its SSH server (Mac: System Settings > General > Sharing > Remote Login; Windows: start the sshd service).".into()
@@ -113,6 +129,7 @@ pub fn format_report(r: &DiagReport) -> String {
     for st in &r.steps {
         let tag = match st.status.as_str() {
             "ok" => "ok  ",
+            "warn" => "WARN",
             "skip" => "skip",
             _ => "FAIL",
         };
@@ -130,7 +147,10 @@ pub fn format_report(r: &DiagReport) -> String {
 
 fn finish(steps: Vec<DiagStep>) -> DiagReport {
     let failed = steps.iter().find(|x| x.status == "fail");
-    let hint = failed.map(|f| hint_for(&f.step, &f.detail));
+    let hint = match failed {
+        Some(f) => Some(hint_for(&f.step, &f.detail)),
+        None => steps.iter().find(|x| x.status == "warn").map(|w| hint_for(&w.step, &w.detail)),
+    };
     DiagReport { ok: failed.is_none(), steps, hint }
 }
 
@@ -182,6 +202,27 @@ fn step_tailscale(host: &str) -> DiagStep {
         Ok((true, t)) => mk("tailscale", "ok", t.lines().next().unwrap_or("pong").trim()),
         Ok((false, t)) => mk("tailscale", "fail", t.lines().next().unwrap_or("no reply").trim()),
         Err(e) => mk("tailscale", "fail", e),
+    }
+}
+
+/// Windows only: the interface Windows picks for the peer's IP (Find-NetRoute). Read-only.
+fn step_route(host: &str) -> DiagStep {
+    if !cfg!(windows) {
+        return mk("route", "skip", "only checked on Windows");
+    }
+    if host.is_empty() || !host.chars().all(|c| c.is_ascii_hexdigit() || c == '.' || c == ':') {
+        return mk("route", "skip", "peer is not an IP address");
+    }
+    let mut c = proc("powershell");
+    c.args(["-NoProfile", "-NonInteractive", "-Command", &format!("(Find-NetRoute -RemoteIPAddress '{host}' | Select-Object -First 1).InterfaceAlias")]);
+    match run_timeout(c, 10) {
+        Ok((true, t)) => {
+            let alias = t.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+            let (st, d) = route_verdict(alias);
+            mk("route", st, d)
+        }
+        Ok((false, t)) => mk("route", "skip", t.lines().next().unwrap_or("Find-NetRoute failed").trim()),
+        Err(e) => mk("route", "skip", e),
     }
 }
 
@@ -290,8 +331,9 @@ fn resolve(target: &str) -> (String, u16) {
 fn run_all(target: String, session: Option<String>) -> DiagReport {
     let (host, port) = resolve(&target);
     let mut steps = Vec::new();
-    let checks: [Box<dyn Fn() -> DiagStep>; 4] = [
+    let checks: [Box<dyn Fn() -> DiagStep>; 5] = [
         Box::new({ let h = host.clone(); move || step_tailscale(&h) }),
+        Box::new({ let h = host.clone(); move || step_route(&h) }),
         Box::new({ let h = host.clone(); move || step_tcp(&h, port) }),
         Box::new({ let t = target.clone(); move || step_ssh(&t) }),
         Box::new({ let t = target.clone(); move || step_bridge(&t, session.clone()) }),
@@ -346,6 +388,24 @@ mod tests {
         let s = step_reverse(22);
         assert_eq!(s.status, "skip");
         assert!(s.detail.contains("nc -vz") && s.detail.contains("Test-NetConnection"));
+    }
+
+    #[test]
+    fn route_verdict_warns_off_tailscale_adapter() {
+        assert_eq!(route_verdict("Tailscale").0, "ok");
+        assert_eq!(route_verdict("tailscale0").0, "ok");
+        let (st, d) = route_verdict("Wi-Fi VPN TUN");
+        assert_eq!(st, "warn");
+        assert!(d.contains("not the Tailscale adapter") && d.contains("100.64.0.0/10"));
+        assert_eq!(route_verdict("  ").0, "skip");
+    }
+
+    #[test]
+    fn warn_gives_hint_but_stays_ok() {
+        let r = rep(vec![mk("tailscale", "ok", ""), mk("route", "warn", "via Foo")]);
+        assert!(r.ok);
+        assert_eq!(r.hint.as_deref(), Some(VPN_HINT));
+        assert!(format_report(&r).contains("WARN Route to peer"));
     }
 
     #[test]

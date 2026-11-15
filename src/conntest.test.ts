@@ -12,4 +12,10 @@ describe("formatDiag", () => {
   it("skip and no detail", () => {
     expect(formatDiag({ ok: true, hint: null, steps: [{ step: "tailscale", label: "Tailscale ping", status: "skip", detail: "" }] })).toBe("skip Tailscale ping");
   });
+  it("warn step is tagged WARN and does not fail the report", () => {
+    const t = formatDiag({ ok: true, hint: "a VPN/TUN adapter is capturing 100.64.0.0/10; exclude it from the VPN or pause it", steps: [
+      { step: "route", label: "Route to peer", status: "warn", detail: "via Wi-Fi" },
+    ] });
+    expect(t).toBe("WARN Route to peer - via Wi-Fi\nHint: a VPN/TUN adapter is capturing 100.64.0.0/10; exclude it from the VPN or pause it");
+  });
 });
