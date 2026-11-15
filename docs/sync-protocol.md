@@ -383,3 +383,15 @@ Pitfalls for the Swift (Mac) side, each of which makes replicas disagree:
 - Manual (after both apps ship): edit a Space's colour on the Mac offline,
   its notes on Windows offline, reconnect, run one exchange, both show both
   edits.
+
+## Interop fixtures
+
+The Swift app and this crate must put identical bytes on the wire. Both run one scripted scenario
+(`crates/wooloo-sync/tests/fixtures/interop-scenario.json`, mirrored in wooloo as
+`woolooTests/Fixtures/interop-scenario.json`) and write a transcript: one wire line per line, prefixed `> `
+(initiator to responder) or `< ` (responder to initiator), hello (with `herdr_version`), ops, end.
+
+- `interop-rust.transcript` is emitted by `crates/wooloo-sync/tests/interop.rs`; `interop-swift.transcript` by wooloo's `PeerSyncInteropTests`.
+- Normal runs assert each side's output equals both committed transcripts, and replay the other side's transcript through its own responder and initiator, checking the converged state.
+- Regenerate (needs `WOOLOO_INTEROP_REGENERATE=1`): Rust via `scripts/sync-interop.sh regenerate`; Swift by running the test with the same variable (CI prints the transcript between `INTEROP-TRANSCRIPT-BEGIN`/`END` markers in the log). Copy each file into the other repo's fixtures folder (`scripts/sync-interop.sh pull-swift <file>` for the Swift one). Any change to the scenario or wire format means regenerating both.
+- A missing transcript is skipped with a note, so the first CI run on each side only prints it.
