@@ -196,8 +196,11 @@ function Api-Capable {
 
 switch ($entry.name) {
     'wooloo-hello' {
-        $v = (& $herdrPath --version 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -ne 0 -or -not $v) { Deny 'herdr version failed' }
+        # Collect all output first: `| Select-Object -First 1` stops the pipeline early and pwsh 7 then leaves $LASTEXITCODE unset/non-zero.
+        $vOut = @(& $herdrPath --version 2>$null)
+        $vCode = $LASTEXITCODE
+        $v = $vOut | Select-Object -First 1
+        if ($vCode -ne 0 -or -not $v) { Deny 'herdr version failed' }
         $v = ($v -replace '^\s*herdr\s+', '').Trim()
         if ($v -notmatch '^[0-9A-Za-z.+-]{1,32}$') { Deny 'bad herdr version' }
         Say "wooloo-peer-bridge-v1 $v`n"

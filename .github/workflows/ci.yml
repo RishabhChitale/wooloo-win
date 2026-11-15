@@ -83,7 +83,6 @@ jobs:
       matrix:
         shell: [powershell, pwsh]   # powershell = Windows PowerShell 5.1 (sshd default shell, must pass); pwsh = 7
     env:
-      WOOLOO_PEER_DIAG: "1"          # byte-count diag on cap refusals; remove once green
       WOOLOO_TEST_SHELL: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
