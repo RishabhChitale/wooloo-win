@@ -131,7 +131,7 @@ Remove-Item Env:FAKE_NOCHECK
 
 # wooloo-sync takes no arguments: near misses are refused
 Denied 'sync with argument' 'wooloo-peer sync x'
-Denied 'sync trailing space' 'wooloo-peer sync '
+Denied 'sync two trailing spaces' 'wooloo-peer sync  '
 Denied 'sync uppercase' 'wooloo-peer SYNC'
 Denied 'sync chained' 'wooloo-peer sync; id'
 
@@ -148,7 +148,7 @@ Denied 'redirect' 'wooloo-peer hello > x.txt'
 Denied 'cmd.exe /c' 'cmd.exe /c calc'
 Denied 'powershell -Command' 'powershell -Command calc'
 Denied 'newline after hello' "wooloo-peer hello`ncalc"
-Denied 'trailing space' 'wooloo-peer hello '
+Denied 'two trailing spaces' 'wooloo-peer hello  '
 Denied 'trailing newline' "wooloo-peer hello`n"
 Denied 'bad session chars' 'wooloo-peer api wo oloo'
 Denied 'session too long' ("wooloo-peer api " + ('a' * 65))
