@@ -96,9 +96,9 @@ step "session B independent of A (own server)" "$t" $?
 
 # --- Part 2: two wooloo-sync replicas (docs/sync-protocol.md) ---
 # Each "machine" = one Herdr session + one sync replica (own state file and unit
-# categories file). The "ssh hop" is a local shim: the real `wooloo-sync sync`
-# runs unchanged, but `ssh -- <A|B> cmd` just runs cmd locally with that
-# machine's state env. No real SSH, no Tailscale.
+# categories file). The "link" is `wooloo-sync sync --loopback`: the real
+# initiator runs unchanged and the responder is a local child process on the
+# peer's state files. No real SSH, no Tailscale.
 SYNC_DIR=$(mktemp -d "$LOGDIR/wooloo-e2e-sync.XXXXXX")
 trap 'cleanup; rm -rf "$SYNC_DIR"' EXIT INT TERM
 SYNC_BIN=""
@@ -116,32 +116,22 @@ else
 fi
 
 if [ -n "$SYNC_BIN" ] && [ -x "$SYNC_BIN" ]; then
-  mkdir -p "$SYNC_DIR/bin" "$SYNC_DIR/A" "$SYNC_DIR/B"
-  cat >"$SYNC_DIR/bin/ssh" <<'SHIM'
-#!/usr/bin/env bash
-# Test shim: `ssh [opts] -- <A|B> <cmd>` runs <cmd> locally as machine <A|B>.
-while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
-shift; tgt=$1; shift
-case "$tgt" in A|B) ;; *) echo "e2e ssh shim: bad target $tgt" >&2; exit 255 ;; esac
-export WOOLOO_SYNC_STATE="$E2E_SYNC_DIR/$tgt/state.json"
-export WOOLOO_SYNC_UNITCAT="$E2E_SYNC_DIR/$tgt/unitcat.json"
-exec bash -c "$1"
-SHIM
-  chmod +x "$SYNC_DIR/bin/ssh"
-  export E2E_SYNC_DIR="$SYNC_DIR"
+  mkdir -p "$SYNC_DIR/A" "$SYNC_DIR/B"
 
   # Run the real CLI as machine $1 (initiator) against machine $2 (responder).
   do_sync() {
-    PATH="$SYNC_DIR/bin:$PATH" \
     WOOLOO_SYNC_STATE="$SYNC_DIR/$1/state.json" WOOLOO_SYNC_UNITCAT="$SYNC_DIR/$1/unitcat.json" \
-      "$SYNC_BIN" sync "$2" --remote-cmd "$SYNC_BIN exchange" >>"$LOGDIR/wooloo-e2e-sync.log" 2>&1
+      "$SYNC_BIN" sync --loopback --peer-state "$SYNC_DIR/$2/state.json" \
+        --peer-unitcat "$SYNC_DIR/$2/unitcat.json" >>"$LOGDIR/wooloo-e2e-sync.log" 2>&1
   }
-  # The "app layer": mirror a Herdr label + category into the unit-categories file.
-  # $1 machine, then name/category pairs; replaces the whole file.
+  # The "app layer": a local category edit on machine $1, then name/category pairs.
   set_cats() {
     local m=$1; shift
-    local args=() ; while [ "$#" -gt 0 ]; do args+=(--arg "$1" "$2"); shift 2; done
-    jq -n '$ARGS.named' "${args[@]}" >"$SYNC_DIR/$m/unitcat.json"
+    while [ "$#" -gt 0 ]; do
+      WOOLOO_SYNC_STATE="$SYNC_DIR/$m/state.json" WOOLOO_SYNC_UNITCAT="$SYNC_DIR/$m/unitcat.json" \
+        "$SYNC_BIN" edit "unitcat:$1" category "$2" >>"$LOGDIR/wooloo-e2e-sync.log" 2>&1 || return 1
+      shift 2
+    done
   }
   cat_of() { jq -r --arg n "$2" '.[$n] // empty' "$SYNC_DIR/$1/unitcat.json" 2>/dev/null; }
   has_cat() { [ "$(cat_of "$1" "$2")" = "$3" ]; }
@@ -155,6 +145,8 @@ SHIM
   # 7. rename on B appears on A
   t=$(now_ms)
   set_cats B e2e-renamed2 claude
+  WOOLOO_SYNC_STATE="$SYNC_DIR/B/state.json" WOOLOO_SYNC_UNITCAT="$SYNC_DIR/B/unitcat.json" \
+    "$SYNC_BIN" edit unitcat:e2e-renamed category --null >>"$LOGDIR/wooloo-e2e-sync.log" 2>&1
   do_sync B A && has_cat A e2e-renamed2 claude && ! has_cat A e2e-renamed claude && [ $(( $(now_ms) - t )) -le 2000 ]
   step "rename on B reaches A (<=2s)" "$t" $?
 
