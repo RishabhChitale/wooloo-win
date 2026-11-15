@@ -78,8 +78,20 @@ tailscale ping works but ssh times out (TCP 22 blocked while the Tailscale path 
   on a TCP 22 timeout, the reverse-direction command to run on the Mac.
   Decision tree (PowerShell, in order, stop at the first that fails):
   1. PC -> itself:  Test-NetConnection 100.104.240.58 -Port 22
-     Fails -> sshd/local problem: Get-Service sshd; netstat -an | findstr ":22 "
-     Succeeds -> sshd is fine, go on.
+     RESULT SEEN (real PC): False. Firewall profiles Domain/Private/Public all
+     Enabled=True, DefaultInboundAction=NotConfigured. So the problem is PC-local, not
+     only a Tailscale ACL. A self-test against the Tailscale IP can fail for a
+     local-address reason, so ALWAYS compare with loopback:
+       Test-NetConnection 127.0.0.1 -Port 22
+     Then, if the self-test fails:
+       Get-Service sshd
+       netstat -ano | findstr :22        (expect LISTENING on 0.0.0.0:22 and [::]:22)
+       Get-NetFirewallRule -DisplayName wooloo-sshd-tailscale | Get-NetFirewallPortFilter
+         (expect Protocol TCP, LocalPort 22)
+       third-party AV/firewall (disable temporarily or check its rules).
+     Loopback True + Tailscale IP False = local-address/filtering issue (firewall,
+     AV, Tailscale interface); loopback False = sshd not accepting (service/listener).
+     Self-test OK -> sshd is fine, go on.
   2. PC -> Mac:     Test-NetConnection 100.121.45.79 -Port 22
      Fails -> Mac side (Remote Login, Mac firewall) or Tailscale ACL; test from the Mac
      with: nc -vz 100.104.240.58 22 to compare directions.
