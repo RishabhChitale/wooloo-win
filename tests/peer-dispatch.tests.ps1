@@ -185,7 +185,10 @@ if (-not $done) { try { $p.Kill() } catch {} }
 # a line over 1 MiB: exit 65 + message
 $p = StartSync $echoCmd
 $errT = $p.StandardError.ReadToEndAsync()
-try { $p.StandardInput.Write(('x' * 1048577) + "`n"); $p.StandardInput.Flush() } catch {}
+$raw2 = New-Object byte[] 1048578
+for ($k = 0; $k -lt 1048577; $k++) { $raw2[$k] = 120 }
+$raw2[1048577] = 10
+try { $p.StandardInput.BaseStream.Write($raw2, 0, $raw2.Length); $p.StandardInput.BaseStream.Flush() } catch {}
 $done = $p.WaitForExit(30000)
 Check 'sync: line over 1 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
 Check 'sync: line over 1 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
@@ -196,7 +199,12 @@ if (-not $done) { try { $p.Kill() } catch {} }
 $p = StartSync $echoCmd
 $out = $p.StandardOutput.ReadToEndAsync()
 $errT = $p.StandardError.ReadToEndAsync()
-$p.StandardInput.Write(('y' * 1048576) + "`n"); $p.StandardInput.Close()
+# Raw bytes through BaseStream: Process.StandardInput is a StreamWriter that can prepend an encoding preamble (BOM),
+# which would add bytes to the line. Exactly 1048576 'y' bytes + 0x0A.
+$raw = New-Object byte[] 1048577
+for ($k = 0; $k -lt 1048576; $k++) { $raw[$k] = 121 }
+$raw[1048576] = 10
+$p.StandardInput.BaseStream.Write($raw, 0, $raw.Length); $p.StandardInput.BaseStream.Flush(); $p.StandardInput.Close()
 $done = $p.WaitForExit(60000)
 $okOut = $out.Wait(10000) -and ($out.Result.Length -ge 1048576 + 5) -and $out.Result.StartsWith('ECHO:yyyy')
 Check 'sync: line at the cap passes' ($done -and $p.ExitCode -eq 0 -and $okOut)
