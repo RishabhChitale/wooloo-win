@@ -70,13 +70,24 @@ herdr not found: PC path above missing from PATH or the pairing; run
   `& "C:\Users\risha\.herdr\packages\standalone\releases\0.9.5-x86_64-pc-windows-msvc\herdr.exe" --version`.
 Host key prompt (ssh asks "continue connecting?"): from a plain ssh test, answer yes
   once; if the app hangs on it, pairing did not record the host key: report it.
-tailscale ping works but ssh times out: the path is fine, port 22 is blocked. Causes:
-  1. Tailscale Shields Up on the PC. Check: tailscale debug prefs | findstr /i ShieldsUp
-     Fix: tailscale set --shields-up=false
-  2. Tailscale ACL/tag does not allow port 22 between the two machines (admin console).
-  3. Third-party firewall or Windows Defender Firewall.
-  Already known good: firewall rule wooloo-sshd-tailscale is Enabled/Allow/Any and sshd
-  listens on 0.0.0.0:22, so look at the three causes above first.
+tailscale ping works but ssh times out (TCP 22 blocked while the Tailscale path is fine):
+  RULED OUT on this PC: Shields Up is false; rule wooloo-sshd-tailscale is
+  Enabled/Allow/Any; sshd listens on 0.0.0.0:22 and ::. (Elsewhere: check with
+  tailscale debug prefs | findstr /i ShieldsUp; fix tailscale set --shields-up=false.)
+  Decision tree (PowerShell, in order, stop at the first that fails):
+  1. PC -> itself:  Test-NetConnection 100.104.240.58 -Port 22
+     Fails -> sshd/local problem: Get-Service sshd; netstat -an | findstr ":22 "
+     Succeeds -> sshd is fine, go on.
+  2. PC -> Mac:     Test-NetConnection 100.121.45.79 -Port 22
+     Fails -> Mac side (Remote Login, Mac firewall) or Tailscale ACL; test from the Mac
+     with: nc -vz 100.104.240.58 22 to compare directions.
+  3. Windows firewall: Get-NetFirewallProfile | Format-Table Name,Enabled,DefaultInboundAction
+     and inbound blocks: Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True |
+     Format-Table DisplayName,Profile. A Block rule beats Allow; also check third-party
+     security software.
+  4. Tailscale ACLs (admin console > Access controls): must allow this device to reach
+     the other on tcp:22 (tags, grants). Look at the ACL "Preview" for both machines.
+  Paste every result into the FAILURE REPORT. UNVERIFIED results pending from the user.
 Never start herdr from an Administrator window (see the Administrator note above).
 
 ## Known risks
