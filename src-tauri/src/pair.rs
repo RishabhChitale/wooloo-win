@@ -315,6 +315,17 @@ fn write_keys(path: &Path, peer: &str, line: &str, admin: bool, elevated: bool) 
 /// Installs the pairing on this PC after the user confirmed the fingerprints in the dialog.
 #[tauri::command(rename_all = "snake_case")]
 pub fn pair_accept(app: AppHandle, state: State<App>, code: String, include_ssh_config: bool) -> Res<Accepted> {
+    // Never let a panic take the app down: turn it into an error shown in the dialog.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pair_accept_inner(&app, &state, code, include_ssh_config)))
+        .unwrap_or_else(|p| Err(format!("pairing failed unexpectedly: {} (details in crash.log under %APPDATA%\\wooloo)", panic_text(p.as_ref()))))
+}
+
+fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "unknown panic".into())
+}
+
+fn pair_accept_inner(app: &AppHandle, state: &State<App>, code: String, include_ssh_config: bool) -> Res<Accepted> {
+    let app = app.clone();
     let c = PairCode::decode(&code).map_err(s)?;
     let peer = c.peer_id();
     let cfg = config_dir(&app)?;
@@ -361,7 +372,7 @@ pub fn pair_accept(app: AppHandle, state: State<App>, code: String, include_ssh_
     // 4. the machine in machines.toml (re-pairing replaces the old entry), started right away
     let host_alias = format!("wooloo-peer-{peer}");
     let m = {
-        let mut f = state.file.lock().unwrap();
+        let mut f = state.file.lock().unwrap_or_else(|e| e.into_inner());
         let old: Vec<String> = f.machines.iter().filter(|m| m.ssh_target.as_deref() == Some(host_alias.as_str())).map(|m| m.id.clone()).collect();
         for id in old {
             f.remove(&id);

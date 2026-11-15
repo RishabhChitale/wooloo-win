@@ -30,6 +30,7 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - sync_status() -> SyncStatus[] {machine_id, peer_label, state:"connecting"|"ok"|"offline"|"skew", last_ok_ms, pending, local_herdr_version, peer_herdr_version, syncing, last_error?, last_report?}
   last_ok_ms is epoch MILLISECONDS UTC (null/absent = never synced). pending = count of local ops not yet acked by that peer. Herdr versions are strings (`herdr --version`, e.g. "0.9.5"); null = unknown. local_herdr_version is read once from `herdr --version` and cached (null if herdr is missing). peer_herdr_version comes from the sync hello (spec s8.1) and is kept from the last successful round; null = never synced yet or an old peer that does not send it. SyncReport also carries `peer_herdr_version`.
   Replica is persisted in the app config dir as meta-state.json. Allow-list (docs/peer-allowlist.json) is at revision 2 (new entry wooloo-sync).
+- Crash safety: `pair_accept` catches panics and returns them as an error string (shown in the Pair dialog); a global panic hook appends to `%APPDATA%\wooloo\crash.log`. Starting a machine from a sync command enters Tauri's tokio runtime first (spawning outside it used to panic and close the app on Accept pairing).
 - copy text is done in the frontend (navigator.clipboard)
 
 ## Tauri events (Rust -> frontend, via app.emit)

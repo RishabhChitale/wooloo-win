@@ -728,4 +728,29 @@ mod tests {
         assert_eq!(admin_flags(elevated), (true, true));
         assert_eq!(admin_flags("Everyone S-1-1-0\nMandatory Label\\Medium Mandatory Level Label S-1-16-8192"), (false, false));
     }
+
+    // Real code from the user's Mac (public key + host key only).
+    const MAC_CODE: &str = "wooloo-pair-v1:eyJoZXJkclZlcnNpb24iOiIwLjkuNSIsImhvc3RLZXkiOiJzc2gtZWQyNTUxOSBBQUFBQzNOemFDMWxaREkxTlRFNUFBQUFJR2Z0ZDlZUFZKZ2ExMHd2SjVEdlRlY3k0cE9PSEh6RWtTaEZrYkt5U1ZqTSIsImxhYmVsIjoicmlzaGFiaHMtbWFjYm9vay1wcm8iLCJwdWJsaWNLZXkiOiJzc2gtZWQyNTUxOSBBQUFBQzNOemFDMWxaREkxTlRFNUFBQUFJQmtCTnljaElHU2wrL083TDJpbGxtRlRHbzJOekZmdUVCQWxqMVRrUlJvSyIsInNlc3Npb24iOiJkZWZhdWx0IiwidGFyZ2V0Ijoiem9tYXRvQDEwMC4xMjEuNDUuNzkifQ";
+
+    #[test]
+    fn real_mac_code_decodes_and_builds_every_pairing_artifact() {
+        let c = PairCode::decode(MAC_CODE).expect("mac code decodes");
+        assert_eq!(c.label, "rishabhs-macbook-pro");
+        assert_eq!(c.target, "zomato@100.121.45.79");
+        assert_eq!(c.session, "default");
+        assert_eq!(c.herdr_version, "0.9.5");
+        let peer = c.peer_id();
+        assert_eq!(peer, "rishabhs-macbook-pro");
+        assert!(c.validate().is_ok());
+        let line = authorized_keys_line("C:\\Users\\risha\\AppData\\Roaming\\wooloo\\peer-dispatch.ps1", &peer, Some("C:\\Users\\risha\\.herdr\\herdr.exe"), &c.public_key).unwrap();
+        assert!(line.contains("restrict"));
+        let (merged, changed) = merge_authorized_keys("", &peer, &line);
+        assert!(changed && merged.contains(&peer));
+        assert!(!known_hosts_line(&peer, &c.host_key).is_empty());
+        let conf = ssh_conf(&peer, &c.target, "C:\\u\\key", "C:\\u\\kh").unwrap();
+        assert!(conf.contains("100.121.45.79") && conf.contains("zomato"));
+        assert!(!elevated_commands("C:\\ProgramData\\ssh\\administrators_authorized_keys", &line).is_empty());
+        assert!(with_include("").starts_with(INCLUDE_LINE));
+        assert_eq!(split_target(&c.target).unwrap(), ("100.121.45.79".to_string(), "zomato".to_string(), 22));
+    }
 }

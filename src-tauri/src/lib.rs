@@ -29,8 +29,11 @@ impl App {
         self.handles.lock().unwrap().get(id).cloned().ok_or_else(|| format!("unknown machine {id}"))
     }
     fn start(&self, m: &Machine) {
+        // Sync commands run outside any tokio runtime; tokio::spawn would panic (and kill the app). Enter Tauri's runtime first.
+        let tauri::async_runtime::RuntimeHandle::Tokio(rt) = tauri::async_runtime::handle().clone();
+        let _guard = rt.enter();
         let h = spawn_machine(m.clone(), self.events.clone());
-        if let Some(old) = self.handles.lock().unwrap().insert(m.id.clone(), h) {
+        if let Some(old) = self.handles.lock().unwrap_or_else(|e| e.into_inner()).insert(m.id.clone(), h) {
             old.send(Command::Stop);
         }
     }
@@ -297,7 +300,30 @@ fn forward(app: AppHandle, ev: Event) {
     };
 }
 
+/// Where panics are logged: %APPDATA%\wooloo\crash.log (or $HOME/.wooloo/crash.log).
+fn crash_log_path() -> PathBuf {
+    std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("wooloo")).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".wooloo"))).unwrap_or_else(std::env::temp_dir).join("crash.log")
+}
+
+fn install_panic_hook() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let p = crash_log_path();
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let line = format!("[{ts}] panic: {info}\n{}\n", std::backtrace::Backtrace::force_capture());
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+            use std::io::Write;
+            let _ = f.write_all(line.as_bytes());
+        }
+        prev(info);
+    }));
+}
+
 pub fn run() {
+    install_panic_hook();
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
@@ -330,5 +356,11 @@ pub fn run() {
             sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status
         ])
         .run(tauri::generate_context!())
-        .expect("error while running wooloo");
+        .unwrap_or_else(|e| {
+            let p = crash_log_path();
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&p, format!("fatal: {e}\n"));
+        });
 }
