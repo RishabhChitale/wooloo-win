@@ -1,0 +1,5 @@
+# fixtures are byte-exact: never convert line endings (Windows checkouts broke rust_transcript_matches_fixture)
+crates/wooloo-sync/tests/fixtures/** -text
+docs/sync-vectors.json -text
+docs/peer-allowlist.json -text
+*.transcript -text
