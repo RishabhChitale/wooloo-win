@@ -1,7 +1,7 @@
 //! Cross-implementation interop with the Swift app (wooloo `PeerSyncInteropTests`).
 //!
 //! Both sides run the same scripted scenario (`fixtures/interop-scenario.json`) and must produce
-//! byte-identical wire transcripts. Transcript format: one wire line per line, prefixed "> "
+//! semantically identical wire transcripts (same messages; member order is not significant, spec 8.1). Transcript format: one wire line per line, prefixed "> "
 //! (initiator to responder) or "< " (responder to initiator).
 //!
 //! Normal run: assert our transcript equals `fixtures/interop-rust.transcript` and `fixtures/interop-swift.transcript`
@@ -25,6 +25,10 @@ fn regs(v: &Value) -> Vec<Register> {
 
 fn lines(bytes: &[u8]) -> Vec<String> {
     std::str::from_utf8(bytes).unwrap().lines().filter(|l| !l.is_empty()).map(str::to_owned).collect()
+}
+
+fn values(ls: &[String]) -> Vec<Value> {
+    ls.iter().map(|l| serde_json::from_str(l).expect("wire line is JSON")).collect()
 }
 
 struct Run {
@@ -130,8 +134,9 @@ fn rust_consumes_swift_transcript() {
     let own = run();
     let ini: Vec<String> = text.lines().filter_map(|l| l.strip_prefix("> ").map(str::to_owned)).collect();
     let resp: Vec<String> = text.lines().filter_map(|l| l.strip_prefix("< ").map(str::to_owned)).collect();
-    assert_eq!(ini, own.to_responder, "initiator stream bytes");
-    assert_eq!(resp, own.to_initiator, "responder reply bytes");
+    // Member order is not significant on the wire (spec 8.1): compare parsed messages, not bytes.
+    assert_eq!(values(&ini), values(&own.to_responder), "initiator stream messages");
+    assert_eq!(values(&resp), values(&own.to_initiator), "responder reply messages");
 
     let s: Value = serde_json::from_str(SCENARIO).unwrap();
     let now = s["now"].as_u64().unwrap();
@@ -148,7 +153,7 @@ fn rust_consumes_swift_transcript() {
         Ok(replica.absorb(ops, malformed, now))
     })
     .expect("respond over swift input");
-    assert_eq!(lines(&out), resp, "responder output over the Swift stream");
+    assert_eq!(values(&lines(&out)), values(&resp), "responder output over the Swift stream");
     assert_eq!(canon(&replica.sorted_regs()), own.resp_final);
 
     let mut ini_replica = Replica::new(ini_node);

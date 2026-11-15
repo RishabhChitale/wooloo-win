@@ -288,7 +288,7 @@ initiator    applies them, saves its state
 
 Every message is one compact JSON object followed by a single `\n` (a reader
 also accepts `\r\n`). No pretty-printing, no BOM, no blank lines. Member order
-does not matter to a reader, and no implementation may depend on it. The Rust
+does not matter to a reader, and no implementation may depend on it. Receivers must accept any member order on every message (vector section `key_order`; tests in the Rust crate and the Swift app). The Rust
 crate currently writes members sorted by name, so a complete exchange where
 the Windows app (`win-07be55d1`) pushes one op the Mac (`mac-3f9a21c0`)
 already has is, byte for byte:
@@ -392,6 +392,7 @@ The Swift app and this crate must put identical bytes on the wire. Both run one 
 (initiator to responder) or `< ` (responder to initiator), hello (with `herdr_version`), ops, end.
 
 - `interop-rust.transcript` is emitted by `crates/wooloo-sync/tests/interop.rs`; `interop-swift.transcript` by wooloo's `PeerSyncInteropTests`.
-- Normal runs assert each side's output equals both committed transcripts, and replay the other side's transcript through its own responder and initiator, checking the converged state.
+- Normal runs assert each side's output equals its own committed transcript byte for byte, and replay the other side's transcript through its own responder and initiator, comparing messages as parsed JSON (member order is not significant, 8.1) and checking the converged state. Swift writes its `end` line with members unsorted, so the two transcripts differ in bytes but not in meaning.
 - Regenerate (needs `WOOLOO_INTEROP_REGENERATE=1`): Rust via `scripts/sync-interop.sh regenerate`; Swift by running the test with the same variable (CI prints the transcript between `INTEROP-TRANSCRIPT-BEGIN`/`END` markers in the log). Copy each file into the other repo's fixtures folder (`scripts/sync-interop.sh pull-swift <file>` for the Swift one). Any change to the scenario or wire format means regenerating both.
+- CI (`vectors` job) regenerates the Rust transcript and uploads it as artifact `interop-rust-transcript`; fetch it with `gh run download <run> -n interop-rust-transcript` into an empty directory and commit it as the fixture in both repos.
 - A missing transcript is skipped with a note, so the first CI run on each side only prints it.

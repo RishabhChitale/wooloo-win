@@ -3840,5 +3840,36 @@
    "expect_herdr_version": null,
    "wire": false
   }
+ ],
+ "key_order": [
+  {
+   "name": "members in reverse order are accepted in both directions",
+   "own_initiator": "win-07be55d1",
+   "own_responder": "mac-3f9a21c0",
+   "now": 1763112001000,
+   "initiator_lines": [
+    "{\"t\":\"hello\",\"proto\":1,\"node\":\"win-07be55d1\"}",
+    "{\"value\":\"A\",\"t\":\"op\",\"node\":\"win-07be55d1\",\"key\":\"space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11\",\"hlc\":{\"wall\":1763112000000,\"counter\":0},\"field\":\"name\"}",
+    "{\"t\":\"end\",\"count\":1}"
+   ],
+   "responder_lines": [
+    "{\"t\":\"hello\",\"proto\":1,\"node\":\"mac-3f9a21c0\"}",
+    "{\"rejected\":0,\"accepted\":1,\"count\":0,\"t\":\"end\"}"
+   ],
+   "expect_responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "A",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "expect_accepted": 1,
+   "expect_rejected": 0
+  }
  ]
 }

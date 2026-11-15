@@ -180,6 +180,13 @@ for v in D.get('hello', []):
     got = hello_model(v['line'], v['own'])
     chk('hello', v['name'], got == (v['expect_ok'], v['expect_peer'], v['expect_herdr_version']), got)
     if v['wire']: chk('hello', v['name'] + ' wire', hello_wire(v['expect_peer'], v['expect_herdr_version']) == v['line'])
+# key_order: every wire line is valid JSON whose members are NOT in sorted order, and the ops still mean the same register
+for v in D.get('key_order', []):
+    ls = v['initiator_lines'] + v['responder_lines']
+    objs = [json.loads(l) for l in ls]
+    chk('key_order', v['name'] + ' unsorted', all(list(o) != sorted(o) for o in objs))
+    chk('key_order', v['name'] + ' op', [{k: x for k, x in objs[1].items() if k != 't'}] == v['expect_responder'], objs[1])
+    chk('key_order', v['name'] + ' end', objs[2].get('count') == v['expect_accepted'] and objs[4].get('accepted') == v['expect_accepted'])
 print({k: c for k, c in counts.items()})
 for f in fails: print('MISMATCH', f)
 print('FAILS', len(fails)); sys.exit(1 if fails else 0)

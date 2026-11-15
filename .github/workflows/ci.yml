@@ -101,3 +101,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p wooloo-sync --test vectors
       - run: python3 scripts/verify_vectors.py
+      - name: Regenerate the Rust interop transcript
+        run: scripts/sync-interop.sh regenerate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: interop-rust-transcript
+          path: crates/wooloo-sync/tests/fixtures/interop-rust.transcript
+          if-no-files-found: error

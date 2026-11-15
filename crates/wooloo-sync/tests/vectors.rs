@@ -206,6 +206,32 @@ fn exchange_vectors_over_the_wire() {
     }
 }
 
+/// Receivers must accept any member order (docs/sync-protocol.md 8.1): the same exchange with every
+/// object's members deliberately unsorted converges exactly like the sorted one.
+#[test]
+fn key_order_vectors() {
+    let v = vectors();
+    for c in section(&v, "key_order") {
+        let now = u(&c["now"]);
+        let (ini, resp) = (c["own_initiator"].as_str().unwrap(), c["own_responder"].as_str().unwrap());
+        let join = |k: &str| -> Vec<u8> { strings(&c[k]).iter().flat_map(|l| format!("{l}\n").into_bytes()).collect() };
+
+        let mut b = Replica::new(resp);
+        let responded = exchange::respond(&mut Cursor::new(join("initiator_lines")), &mut Vec::new(), resp, |peer, ops, malformed| {
+            assert_eq!(peer, ini);
+            Ok(b.absorb(ops, malformed, now))
+        })
+        .unwrap_or_else(|e| panic!("{}: respond failed: {e}", name(c)));
+        assert_eq!(responded.malformed, 0, "{}", name(c));
+        assert_eq!(as_json(&b.sorted_regs()), c["expect_responder"], "{}", name(c));
+
+        let got = exchange::initiate(&mut Cursor::new(join("responder_lines")), &mut Vec::new(), ini, &[])
+            .unwrap_or_else(|e| panic!("{}: initiate failed: {e}", name(c)));
+        assert_eq!(got.peer, resp);
+        assert_eq!((got.accepted, got.rejected), (u(&c["expect_accepted"]), u(&c["expect_rejected"])), "{}", name(c));
+    }
+}
+
 fn last_line(out: &[u8]) -> Map<String, Value> {
     let text = std::str::from_utf8(out).unwrap();
     let line = text.lines().last().expect("some output");
