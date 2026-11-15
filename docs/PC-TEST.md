@@ -2,8 +2,7 @@
 
 Plain text. UNVERIFIED = never run on the real PC/sshd by the pawns; if it
 differs, that is a finding (see FAILURE REPORT).
-Button names below follow the rc5 flow; older builds say "Make code" instead
-of "Generate code" (UNVERIFIED label match).
+Button names are the exact strings from the code (see table at the end).
 
 ## Facts
 PC  = rish-win11, user risha (whoami: rish-win11\risha), Tailscale 100.104.240.58
@@ -17,22 +16,31 @@ Mac needs wooloo 0.3.17.9 or newer.
    https://github.com/RishabhChitale/wooloo-win/releases/download/v0.1.0-rc5/wooloo_0.1.0_x64-setup.exe
    Run it (SmartScreen: More info > Run anyway). Expect: installs over rc4.
 2. PC: open wooloo-win. Local machine dot should be GREEN.
-   Red: click reload (the circular arrow). Click "Start Herdr" ONLY if no server is running.
-3. PC: click "Pair device" (rail header button, or the link icon on a machine row).
-   Target defaults to risha@100.104.240.58 (editable). Click "Generate code".
-   Expect: a copy box with the pairing code (wooloo-pair-v1:...) and fingerprints.
-   If the app is NOT elevated it also shows the authorized_keys line plus PowerShell
-   commands: open PowerShell as Administrator, paste them exactly as shown, once.
-   (Admin accounts use C:\ProgramData\ssh\administrators_authorized_keys; the commands
-   also fix its ACL.) UNVERIFIED on the real PC.
-4. Copy the PC's code to the Mac (clipboard/chat/AirDrop-text, any way).
-5. Mac: wooloo > Connections > Pair Device > paste the PC's code > Review.
-   Check the fingerprints match the PC's dialog > Pair.
-   Expect: success; Mac Herdr gets a machine wooloo-peer-<id>.
+   Red: click the reload arrow (title "Reconnect" on a machine row).
+   Click "Start Herdr" ONLY if no server is running.
+3. PC: click "Pair device" (rail header, next to "+ Add"; also the link icon titled
+   "Pair device" on a machine row). Dialog title "Pair device", heading
+   "1. Show this PC's code". The target box (placeholder "this PC as the peer reaches
+   it: user@100.x.y.z") is prefilled risha@100.104.240.58 (editable). Click "Generate code".
+   Expect: "Send this code to the other device (and compare fingerprints there):"
+   with the wooloo-pair-v1:... code, then "key <fp>", "host <fp>", "Herdr: <path>".
+   (Dialog is opened from the same buttons; the Add-machine dialog also has "Pair device...".)
+4. Copy the PC's code to the Mac (any way).
+5. Mac: wooloo > Connections window > "Pair Device..." (title "Pair Device").
+   Paste the PC's code in the unlabeled paste box; the line "<label> . <target> . session
+   <s> . Herdr <v>" plus "Device key <fp>" and "Host key <fp>" appear: compare with the
+   PC's key/host lines. Click "Pair".
+   Expect success; Mac Herdr gets machine wooloo-peer-<id>.
    If it says "profile written; Herdr couldn't add it: ..." copy that text (see Risks).
-6. Mac shows its own code. Copy it to the PC.
-7. PC: Pair dialog > "Enter a code" > paste Mac's code > Review >
-   compare fingerprints > Accept pairing. Expect "Paired with <label>."
+6. Mac: field "Reach this Mac at (user@host[:port])" -> zomato@100.121.45.79, click
+   "Generate Code" then "Copy Code". Copy it to the PC.
+7. PC: "Pair device" dialog, heading "2. Enter a code": paste into the box (placeholder
+   "wooloo-pair-v1:..."), click "Review", compare fingerprints, optionally tick "Add an
+   Include line to ~/.ssh/config so plain ssh also knows this peer", click "Accept pairing".
+   Expect "Paired with <label>."
+   If instead "Paired, but this PC's <path> still needs the peer's key": open PowerShell
+   as Administrator and paste the "Or paste this into PowerShell run as Administrator:"
+   box (or click "Copy commands"), once. Then "Close". UNVERIFIED on the real PC.
 8. Expected results:
    a. PC rail shows the Mac machine with a GREEN dot and its Spaces.
    b. Mac sidebar shows the PC machine and its Spaces.
@@ -83,3 +91,24 @@ NEVER paste private keys (e.g. ~/.ssh/wooloo_peer_ed25519).
 - PC: dispatcher %APPDATA%\app.wooloo.win\peer-dispatch.ps1; host key C:\ProgramData\ssh\ssh_host_ed25519_key.pub.
 - authorized_keys form: command="powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ... -Peer <id>",restrict ssh-ed25519 ...
 - Sync state ~/.config/wooloo-sync/state.json via `wooloo-sync exchange`. See docs/ARCHITECTURE.md, docs/windows-openssh-setup.md.
+
+## Exact UI strings used
+PC (wooloo-win)
+| String | Source |
+| Pair device (rail button, dialog title, row icon title) | src/main.ts:17,88; docs/pair-ui-strings.txt |
+| + Add (title "Add machine") | src/main.ts:17 |
+| Start Herdr | src/main.ts:67 |
+| Copy diagnostics | src/main.ts:70 |
+| Reconnect (row button, arrow icon) | src/main.ts:88 |
+| 1. Show this PC's code / 2. Enter a code | docs/pair-ui-strings.txt |
+| Generate code, Review, Accept pairing, Close, Copy commands | docs/pair-ui-strings.txt |
+| this PC as the peer reaches it: user@100.x.y.z; wooloo-pair-v1:... | docs/pair-ui-strings.txt |
+| Add an Include line to ~/.ssh/config so plain ssh also knows this peer | docs/pair-ui-strings.txt |
+| Paired with <label>. / Paired, but this PC's <path> still needs the peer's key | docs/pair-ui-strings.txt |
+Mac (wooloo)
+| Connections (window title) | HerdrConnectionsView.swift:77 |
+| Pair Device... (button) | HerdrConnectionsView.swift:82 |
+| Pair Device (sheet title) | PeerPairingView.swift:26 |
+| Reach this Mac at (user@host[:port]) | PeerPairingView.swift:32 |
+| Generate Code, Copy Code, Pair, Close | PeerPairingView.swift:35,37,73,70 |
+| Device key <fp>, Host key <fp> | PeerPairingView.swift:98-99 |
