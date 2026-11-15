@@ -114,6 +114,21 @@ $al = $alJson | ConvertFrom-Json
 $MARKER = [string]$al.marker
 $PREFIX = [string]$al.markerPrefix
 $sess = '[A-Za-z0-9_-]{1,64}'
+
+# Herdr treats this host as Linux (see the uname answer below), and its Linux candidate script differs from the macOS
+# one only by swapping the two Homebrew lines for the linuxbrew line. The shared allow-list carries the macOS form, so
+# derive the Linux form of the two candidate-scanning entries here (PC-only; the shared list stays unchanged).
+$macBrew = "    emit `"/opt/homebrew/bin/herdr`"`n    emit `"/usr/local/bin/herdr`"`n"
+$linBrew = "    emit `"/home/linuxbrew/.linuxbrew/bin/herdr`"`n"
+$extra = @()
+foreach ($e in @($al.entries)) {
+    if ($e.name -in 'sh-candidates', 'herdr-api-discovery' -and ([string]$e.template).Contains($macBrew)) {
+        $c = $e.PSObject.Copy()
+        $c.template = ([string]$e.template).Replace($macBrew, $linBrew)
+        $extra += $c
+    }
+}
+$al.entries = @($al.entries) + $extra
 $paired = $herdrPath -replace '\\', '/'
 # Herdr treats this host as POSIX (uname answers Linux), so it expects an absolute path starting with '/': advertise
 # C:/Users/x/herdr.exe as /c/Users/x/herdr.exe. The {herdr} slot accepts the advertised form and the plain paired path

@@ -93,6 +93,13 @@ Check 'allow default session (no --session)' (($r.Code -eq 0) -and ($r.Out -like
 $r = Req $byName['herdr-api-bridge'] 'wooloo' ("'" + $fwd + "'")
 Check 'allow single-quoted herdr path' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:--session wooloo remote-api-bridge*'))
 
+# Linux form of the candidate scripts (Herdr on a "Linux" host swaps the Homebrew lines for linuxbrew): allowed, PC-only
+$macBrewT = "    emit `"/opt/homebrew/bin/herdr`"`n    emit `"/usr/local/bin/herdr`"`n"
+$linBrewT = "    emit `"/home/linuxbrew/.linuxbrew/bin/herdr`"`n"
+$linCand = Fill ([string]$byName['sh-candidates'].template).Replace($macBrewT, $linBrewT) 'wooloo' $fwd
+$r = Run '/bin/sh -s' 'studio-mac' ($PREFIX + $linCand)
+Check 'allow Linux candidate script (stdin)' (($r.Code -eq 0) -and ($r.Out -like '*herdr.cmd*'))
+
 # POSIX-style answers: path probes return /c/... (absolute for a POSIX client) and that form is accepted as {herdr}
 $adv = '/' + $fwd.Substring(0, 1).ToLowerInvariant() + $fwd.Substring(2)
 $r = Req $byName['sh-path-probe']
