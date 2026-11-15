@@ -4,10 +4,9 @@ import { categoryLineColors } from "./theme";
 import { CATEGORY_TITLES, groupSpaces } from "./grouping";
 import { clipboardShortcut, mapKeyEvent } from "./keys";
 import { measureCell, PaneView } from "./terminal";
-import { applyMeta, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
-import { compareHerdrVersions } from "./version-skew";
+import { applyMeta, hostOf, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
 import { CATEGORY_ORDER } from "./grouping";
-import type { Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus } from "./types";
+import type { SpaceMetaPatch, Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, MachineSync } from "./types";
 
 const app = document.getElementById("app")!;
 app.innerHTML = `
@@ -26,7 +25,8 @@ const machinesEl = $("machines"), tabsEl = $("tabs"), panesEl = $("panes"), dlg 
 
 let api: Api;
 let metas: SpaceMeta[] = [];
-let syncRows: SyncStatus[] = [];
+let metaNode = "";
+let syncRows: MachineSync[] = [];
 let notesOpen = false;
 let machines: Machine[] = [];
 const status = new Map<string, MachineStatus>();
@@ -58,11 +58,12 @@ function renderRail() {
     machinesEl.appendChild(row);
     const sy = syncRows.find((r) => r.machine_id === m.id);
     if (sy) {
-      const b = document.createElement("div"); b.className = `sync-badge ${sy.state}`; b.textContent = syncBadge(sy); b.title = "Click to sync now";
-      b.addEventListener("click", () => fire(api.syncNow()));
+      const b = document.createElement("div"); b.className = `sync-badge ${sy.syncing ? "syncing" : sy.last_error ? "offline" : "synced"}`;
+      b.textContent = syncBadge(sy, m.label, Date.now()); b.title = "Click to sync now";
+      b.addEventListener("click", () => syncNow(m.id));
       machinesEl.appendChild(b);
     }
-    const spaces = applyMeta(m.id, snaps.get(m.id)?.workspaces ?? [], metas);
+    const spaces = applyMeta(hostOf(m, metaNode), snaps.get(m.id)?.workspaces ?? [], metas);
     if (!spaces.length) {
       const e = document.createElement("div"); e.className = "empty";
       e.textContent = st?.state === "failed" ? "unreachable" : st?.state === "connecting" ? "connecting…" : "no spaces";
@@ -92,13 +93,15 @@ function renderRail() {
 }
 
 function currentSpace(): DisplaySpace | undefined {
-  return selMachine ? applyMeta(selMachine, snaps.get(selMachine)?.workspaces ?? [], metas).find((w) => w.id === selSpace) : undefined;
+  const sm = machines.find((x) => x.id === selMachine);
+  return sm ? applyMeta(hostOf(sm, metaNode), snaps.get(sm.id)?.workspaces ?? [], metas).find((w) => w.id === selSpace) : undefined;
 }
 
-const patch = (mid: string, w: DisplaySpace, p: Parameters<Api["setSpaceMeta"]>[2]) => {
+const patch = (mid: string, w: DisplaySpace, p: SpaceMetaPatch) => {
   // A Space without a mapped uuid has no metadata yet: never write (protocol 4.1).
   if (!w.uuid) return;
-  fire(api.setSpaceMeta(mid, w.id, p));
+  const m = machines.find((x) => x.id === mid);
+  if (m) fire(api.setSpaceMeta({ uuid: w.uuid, herdr_id: w.id, host: hostOf(m, metaNode), fields: p }));
 };
 
 /** Rename (double-click), colour/category menu (context menu) and drag reorder within the category group. */
@@ -158,11 +161,19 @@ function openMenu(x: number, y: number, mid: string, w: DisplaySpace) {
 
 const skewEl = document.getElementById("skew")!;
 function renderSkew() {
-  const worst = syncRows.map((r) => (r.local_herdr_version && r.peer_herdr_version ? { r, v: compareHerdrVersions(r.local_herdr_version, r.peer_herdr_version) } : null))
-    .filter((x): x is NonNullable<typeof x> => !!x && x.v.severity !== "none" && !x.v.ok)
-    .sort((a, b) => (a.v.severity === "error" ? 0 : 1) - (b.v.severity === "error" ? 0 : 1))[0];
-  skewEl.hidden = !worst;
-  if (worst) { skewEl.className = worst.v.severity; skewEl.textContent = `${worst.r.peer_label}: ${worst.v.message}`; }
+  // INTERFACE.md's sync_status carries no Herdr versions yet, so there is nothing to compare; see compareHerdrVersions.
+  skewEl.hidden = true;
+}
+
+async function refreshMeta() {
+  try { const r = await api.getMeta(); metaNode = r.node; metas = r.spaces; } catch (e) { console.warn("get_meta failed", e); }
+  try { syncRows = await api.syncStatus(); } catch (e) { console.warn("sync_status failed", e); }
+  renderRail(); renderNotes(); renderSkew(); if (selSpace) renderMain();
+}
+async function syncNow(machineId: string) {
+  syncRows = syncRows.map((r) => (r.machine_id === machineId ? { ...r, syncing: true } : r)); renderRail();
+  try { await api.syncNow(machineId); } catch (e) { console.warn("sync_now failed", e); }
+  await refreshMeta();
 }
 
 const notesEl = document.getElementById("notes")!;
@@ -296,11 +307,9 @@ function esc(s: string) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
     surfaces.set(skey(ev.machine_id, ev.tab_id), ev);
     if (ev.machine_id === selMachine && ev.tab_id === selTab) renderPanes();
   });
-  await api.onMeta((m) => { metas = m; renderRail(); renderNotes(); if (selSpace) renderMain(); });
-  await api.onSyncStatus((r) => { syncRows = r; renderRail(); renderSkew(); });
+  await api.onMetaChanged(() => { void refreshMeta(); });
   machines = await api.listMachines();
-  api.getMeta().then((m) => { metas = m; renderRail(); }).catch((e) => console.warn("get_meta failed", e));
-  api.syncStatus().then((r) => { syncRows = r; renderRail(); renderSkew(); }).catch((e) => console.warn("sync_status failed", e));
+  void refreshMeta();
   setInterval(renderRail, 5000); // refresh the "2s ago" age text
   renderRail();
 })();

@@ -1,4 +1,4 @@
-import type { SpaceMeta, SyncStatus, Workspace } from "./types";
+import type { Machine, MachineSync, SpaceMeta, Workspace } from "./types";
 
 export const NAME_MAX = 200;
 export const NOTES_MAX_BYTES = 65536;
@@ -13,14 +13,19 @@ export interface DisplaySpace extends Workspace {
   presence: string[];
 }
 
-/** Apply merged metadata to one machine's workspaces: names, categories, colours, notes; hide deleted; sort by order. */
-export function applyMeta(machineId: string, spaces: Workspace[], metas: SpaceMeta[]): DisplaySpace[] {
+/**
+ * `host` of a machine's Spaces in get_meta(): the own node id for the local machine, else the machine id.
+ * (INTERFACE.md does not say how an ssh machine maps to a replica `host`; this is an open question.)
+ */
+export const hostOf = (m: Machine, node: string): string => (m.kind === "local" ? node : m.id);
+
+/** Apply merged metadata to one machine's workspaces: names, categories, colours, notes; sort by order. */
+export function applyMeta(host: string, spaces: Workspace[], metas: SpaceMeta[]): DisplaySpace[] {
   const byId = new Map<string, SpaceMeta>();
-  for (const m of metas) if (m.machine_id === machineId) byId.set(m.herdr_id, m);
+  for (const m of metas) if (m.host === host) byId.set(m.herdr_id, m);
   const out: DisplaySpace[] = [];
   spaces.forEach((w, i) => {
     const m = byId.get(w.id);
-    if (m?.deleted) return;
     const presence = Array.isArray((w as { presence?: unknown }).presence) ? ((w as { presence: unknown[] }).presence.filter((p) => typeof p === "string") as string[]) : [];
     out.push({
       ...w,
@@ -58,11 +63,12 @@ export function ago(secs: number): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
-/** Badge text for a paired machine, e.g. "synced with Mac 2s ago" or "offline, 3 pending". */
-export function syncBadge(s: SyncStatus): string {
-  if (s.state === "offline") return `offline, ${s.pending} pending`;
-  if (s.state === "syncing") return `syncing with ${s.peer_label}…`;
-  return `synced with ${s.peer_label} ${s.last_sync_secs_ago === undefined ? "" : ago(s.last_sync_secs_ago)}`.trim();
+/** Badge text for a paired machine, e.g. "synced with Mac 2s ago" or "sync failed: ...". `now` is epoch ms. */
+export function syncBadge(s: MachineSync, peerLabel: string, now: number): string {
+  if (s.syncing) return `syncing with ${peerLabel}…`;
+  if (s.last_error) return `offline: ${s.last_error}`;
+  if (s.last_ok_ms === undefined) return `not synced with ${peerLabel} yet`;
+  return `synced with ${peerLabel} ${ago(Math.max(0, (now - s.last_ok_ms) / 1000))}`;
 }
 
 export function presenceLabel(presence: string[]): string {

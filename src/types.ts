@@ -60,35 +60,35 @@ export interface KeyInput {
 
 export type Unlisten = () => void;
 
-// ---- Synced context (frontend side of the Tauri commands set_space_meta / get_meta / sync_now / sync_status).
-// Mirrors docs/sync-protocol.md section 4.1. Until INTERFACE.md carries the final spec this is the assumed shape.
-/** Replicated Space metadata, already merged (LWW) by the Rust side. `machine_id` + `herdr_id` locate the workspace. */
+// ---- Synced context: mirrors INTERFACE.md (set_space_meta / get_meta / sync_now / sync_status, event "meta-changed").
+/** One entry of get_meta().spaces. `host` + `herdr_id` locate the workspace; `uuid` is the cross-machine identity. */
 export interface SpaceMeta {
   uuid: string;
-  machine_id: string;
+  host: string;
   herdr_id: string;
   name: string;
   category: string | null;
   color: string | null;
   order: number;
   notes: string | null;
-  deleted?: boolean;
+  pinned_tabs: string[];
 }
-/** Fields the UI may write; `null` clears category/color/notes. */
+/** get_meta() result. `node` is this app's own node id (the `host` of local Spaces). */
+export interface MetaReplica { node: string; spaces: SpaceMeta[] }
+/** `fields` of set_space_meta (allow-listed only); `null` clears category/color/notes. */
 export interface SpaceMetaPatch {
   name?: string;
   category?: string | null;
   color?: string | null;
   order?: number;
   notes?: string | null;
+  pinned_tabs?: string[];
 }
-/** Per paired machine. */
-export interface SyncStatus {
-  machine_id: string;
-  peer_label: string;
-  state: "synced" | "syncing" | "offline";
-  last_sync_secs_ago?: number;
-  pending: number;
-  local_herdr_version?: string;
-  peer_herdr_version?: string;
-}
+/** Argument of set_space_meta. */
+export interface SetSpaceMetaArgs { uuid?: string; herdr_id?: string; host: string; fields: SpaceMetaPatch }
+/** sync_now(machine_id) result. */
+export interface SyncReport { peer: string; sent: number; received: number; stored: number; rejected: number; peer_accepted: number; peer_rejected: number }
+/** sync_status() entry, one per paired (ssh) machine. */
+export interface MachineSync { machine_id: string; syncing: boolean; last_ok_ms?: number; last_error?: string; last_report?: SyncReport }
+/** Event "meta-changed". */
+export interface MetaChanged { machine_id: string; source: "local" | "sync" }
