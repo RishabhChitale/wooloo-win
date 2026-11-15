@@ -23,10 +23,10 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
     <div style="min-width:420px;max-width:560px;display:grid;gap:8px">
       <h3 style="margin:0">Pair device</h3>
       <div><b>1. Show this PC's code</b></div>
-      <div style="display:flex;gap:6px"><input id="pair-target" placeholder="this PC as the peer reaches it: user@100.x.y.z" style="flex:1"><button id="pair-make" type="button">Make code</button></div>
+      <div style="display:flex;gap:6px"><input id="pair-target" placeholder="this PC as the peer reaches it: user@100.x.y.z" style="flex:1"><button id="pair-make" type="button">Generate code</button></div>
       <div id="pair-notes" style="font-size:12px;color:#c80"></div>
       <div id="pair-local" style="font-size:12px"></div>
-      <div><b>2. Paste the other device's code</b></div>
+      <div><b>2. Enter a code</b></div>
       <textarea id="pair-code" rows="3" placeholder="wooloo-pair-v1:..." style="width:100%"></textarea>
       <button id="pair-review" type="button">Review</button>
       <div id="pair-info" style="font-size:12px"></div>

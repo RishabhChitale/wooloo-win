@@ -1,0 +1,31 @@
+Pair dialog user-visible strings (grepped from dist/assets/pair-*.js, rc5)
+
+Entry points
+  Add-machine dialog button:   Pair device…
+Title
+  Pair device
+Headings
+  1. Show this PC's code
+  2. Enter a code
+Buttons
+  Generate code
+  Review
+  Accept pairing
+  Close
+  Copy commands            (only when elevation is needed)
+Field labels / placeholders
+  target placeholder:      this PC as the peer reaches it: user@100.x.y.z
+  code placeholder:        wooloo-pair-v1:...
+  checkbox:                Add an Include line to ~/.ssh/config so plain ssh also knows this peer
+Copy-box / result text
+  After Generate code:     Send this code to the other device (and compare fingerprints there):
+                           [readonly code box], then "key <fp>", "host <fp>", "Herdr: <path or not found>"
+  After Review:            <label> (id <id>) at <target>, session <s>, herdr <v>; key / host / Herdr lines;
+                           "Accepting lets that device's key run only Herdr bridge commands on this PC
+                           (entry in <authorized_keys path>). Check the fingerprints match what the other device shows."
+  After Accept (ok):       Paired with <label>.
+  After Accept (needs elevation):
+                           Paired, but this PC's <path> still needs the peer's key (<reason or "needs an elevated write">).
+                           The line to add:   [readonly box]
+                           Or paste this into PowerShell run as Administrator:   [readonly box]
+Errors: shown in red from the backend; "Pairing needs the desktop app." in a browser.

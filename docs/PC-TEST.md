@@ -31,7 +31,7 @@ Mac needs wooloo 0.3.17.9 or newer.
    Expect: success; Mac Herdr gets a machine wooloo-peer-<id>.
    If it says "profile written; Herdr couldn't add it: ..." copy that text (see Risks).
 6. Mac shows its own code. Copy it to the PC.
-7. PC: Pair dialog > "Enter a code from another device" > paste Mac's code > Review >
+7. PC: Pair dialog > "Enter a code" > paste Mac's code > Review >
    compare fingerprints > Accept pairing. Expect "Paired with <label>."
 8. Expected results:
    a. PC rail shows the Mac machine with a GREEN dot and its Spaces.
