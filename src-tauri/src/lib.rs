@@ -133,14 +133,42 @@ fn scroll(app: State<App>, machine_id: String, pane_id: String, lines: i32) -> R
     Ok(())
 }
 
+/// True if `herdr status server` output reports a running server (`status: running`; "not running" is not).
+fn status_says_running(out: &str) -> bool {
+    out.lines().any(|l| {
+        let l = l.trim().to_ascii_lowercase();
+        l.strip_prefix("status:").map(|v| v.trim() == "running").unwrap_or(false)
+    })
+}
+
+/// True if a server's early exit output means another server already owns the socket.
+fn exit_says_already_running(out: &str) -> bool {
+    out.to_ascii_lowercase().contains("already running")
+}
+
+fn herdr_cmd(args: &[&str]) -> std::process::Command {
+    let mut c = std::process::Command::new("herdr");
+    c.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
+
 /// Starts this PC's own Herdr server (`herdr server`) detached, with no console window on Windows.
+/// Does nothing (Ok) if a server is already running.
 #[tauri::command]
 fn start_local_herdr() -> Res<()> {
-    let mut c = std::process::Command::new("herdr");
-    c.arg("server")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    if let Ok(o) = herdr_cmd(&["status", "server"]).stdin(std::process::Stdio::null()).output() {
+        if o.status.success() && status_says_running(&String::from_utf8_lossy(&o.stdout)) {
+            return Ok(());
+        }
+    }
+    let mut c = herdr_cmd(&["server"]);
+    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -149,7 +177,40 @@ fn start_local_herdr() -> Res<()> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         c.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
-    c.spawn().map(|_| ()).map_err(|e| format!("could not run `herdr server`: {e} (is Herdr installed and on PATH?)"))
+    let mut child = c.spawn().map_err(|e| format!("could not run `herdr server`: {e} (is Herdr installed and on PATH?)"))?;
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    if let Ok(Some(st)) = child.try_wait() {
+        let mut err = String::new();
+        if let Some(mut p) = child.stderr.take() {
+            use std::io::Read;
+            let _ = p.read_to_string(&mut err);
+        }
+        if exit_says_already_running(&err) {
+            return Ok(());
+        }
+        return Err(format!("`herdr server` exited ({st}): {}", err.trim()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_running_detection() {
+        assert!(status_says_running("status: running\npid: 4\n"));
+        assert!(status_says_running("Status:   Running\r\n"));
+        assert!(!status_says_running("status: not running\n"));
+        assert!(!status_says_running("status: stopped"));
+        assert!(!status_says_running(""));
+    }
+
+    #[test]
+    fn already_running_exit() {
+        assert!(exit_says_already_running("Error: herdr server is Already Running (pid 3)"));
+        assert!(!exit_says_already_running("permission denied"));
+    }
 }
 
 fn forward(app: AppHandle, ev: Event) {
