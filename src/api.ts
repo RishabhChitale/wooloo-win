@@ -7,6 +7,8 @@ export interface Api {
   listMachines(): Promise<Machine[]>;
   addMachine(m: { label: string; ssh_target: string; session?: string; pipe_path?: string }): Promise<Machine>;
   removeMachine(id: string): Promise<void>;
+  /** Save the machine's Herdr session (empty = auto-discover); the core restarts it. */
+  setMachineSession(machineId: string, session: string | null): Promise<Machine>;
   reconnectMachine(id: string): Promise<void>;
   /** Start a local Herdr server (local machines only). */
   startLocalHerdr(id: string): Promise<void>;
@@ -50,6 +52,7 @@ async function createTauriApi(): Promise<Api> {
     listMachines: () => invoke("list_machines"),
     addMachine: (m) => invoke("add_machine", m),
     removeMachine: (id) => invoke("remove_machine", { id }),
+    setMachineSession: (machineId, session) => invoke("set_machine_session", { id: machineId, session }),
     reconnectMachine: (id) => invoke("reconnect_machine", { id }),
     startLocalHerdr: () => invoke("start_local_herdr"),
     openSpace: (machineId, workspaceId) => invoke("open_space", { machineId, workspaceId }),
@@ -222,6 +225,7 @@ export function createMockApi(): Api {
       setTimeout(() => emitStatus({ machine_id: mm.id, state: "failed", reason: "mock: cannot reach host", tried: ["ssh user@host:22"], hint: "check the host is on", retry_in_secs: 20 }), 1200);
       return mm;
     },
+    setMachineSession: async (machineId, session) => { const m = machines.find((x) => x.id === machineId)!; m.session = session || undefined; return m; },
     removeMachine: async (id) => { const i = machines.findIndex((m) => m.id === id); if (i >= 0) machines.splice(i, 1); current.delete(id); },
     reconnectMachine: async (id) => {
       emitStatus({ machine_id: id, state: "connecting" });

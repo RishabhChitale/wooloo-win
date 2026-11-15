@@ -52,6 +52,16 @@ function failureBox(m: Machine, st: MachineStatus | undefined, fv: FailureView):
     tr.textContent = "Tried:\n" + fv.tried.map((x) => `- ${x}`).join("\n"); box.appendChild(tr);
   }
   if (fv.retry) { const r = document.createElement("div"); r.className = "fail-hint"; r.textContent = fv.retry; box.appendChild(r); }
+  if (fv.sessions.length) {
+    const sb = document.createElement("div"); sb.className = "fail-btns";
+    const lab = document.createElement("span"); lab.className = "fail-hint"; lab.textContent = "Use session:"; sb.appendChild(lab);
+    for (const name of fv.sessions) {
+      const b = document.createElement("button"); b.textContent = name;
+      b.addEventListener("click", () => fire(api.setMachineSession(m.id, name).then((nm) => { const i = machines.findIndex((x) => x.id === m.id); if (i >= 0) machines[i] = nm; renderRail(); })));
+      sb.appendChild(b);
+    }
+    box.appendChild(sb);
+  }
   const bar = document.createElement("div"); bar.className = "fail-btns";
   if (fv.canStart) {
     const b = document.createElement("button"); b.textContent = "Start Herdr"; b.title = "Start the local Herdr server";

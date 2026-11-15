@@ -7,6 +7,14 @@ export interface FailureView {
   tried: string[];
   retry?: string;
   canStart: boolean;
+  /** Session names from a "found sessions: a, b; choose one" reason. */
+  sessions: string[];
+}
+
+export function parseSessions(reason: string | undefined): string[] {
+  const m = /found sessions:\s*([^;\n]+)/i.exec(reason ?? "");
+  if (!m) return [];
+  return m[1].split(",").map((x) => x.trim()).filter((x) => x.length > 0);
 }
 
 /** null unless the machine is in the failed state. `canStart` only for local machines. */
@@ -18,6 +26,7 @@ export function failureView(m: Machine, st: MachineStatus | undefined): FailureV
     tried: (st.tried ?? []).filter((t) => t.trim().length > 0),
     retry: st.retry_in_secs ? `retrying in ${st.retry_in_secs}s` : undefined,
     canStart: m.kind === "local",
+    sessions: m.kind === "local" ? parseSessions(st.reason) : [],
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diagnosticsText, failureView } from "./diagnostics";
+import { diagnosticsText, failureView, parseSessions } from "./diagnostics";
 import type { Machine, MachineStatus } from "./types";
 
 const local: Machine = { id: "l", label: "This PC", kind: "local" };
@@ -30,5 +30,21 @@ describe("diagnosticsText", () => {
   });
   it("copes with missing status", () => {
     expect(diagnosticsText(local, undefined, env)).toContain("state: unknown");
+  });
+});
+
+describe("parseSessions", () => {
+  it("parses the discovery reason", () => {
+    expect(parseSessions("found sessions: default, work; choose one")).toEqual(["default", "work"]);
+    expect(parseSessions("found sessions: a")).toEqual(["a"]);
+  });
+  it("is empty otherwise", () => {
+    expect(parseSessions("no Herdr server found")).toEqual([]);
+    expect(parseSessions(undefined)).toEqual([]);
+  });
+  it("only offered for local failed machines", () => {
+    const st: MachineStatus = { machine_id: "l", state: "failed", reason: "found sessions: a, b; choose one" };
+    expect(failureView(local, st)!.sessions).toEqual(["a", "b"]);
+    expect(failureView(ssh, st)!.sessions).toEqual([]);
   });
 });
