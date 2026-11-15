@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareHerdrVersions } from "./version-skew";
+import { compareHerdrVersions, skewBanners } from "./version-skew";
 
 describe("compareHerdrVersions", () => {
   it("equal is ok", () => {
@@ -24,5 +24,19 @@ describe("compareHerdrVersions", () => {
   it("unparsable = warn", () => {
     expect(compareHerdrVersions("garbage", "0.9.5").severity).toBe("warn");
     expect(compareHerdrVersions("0.9.5", "").severity).toBe("warn");
+  });
+});
+
+describe("skewBanners", () => {
+  const row = (l: string | null, p: string | null, id = "m") => ({ machine_id: id, peer_label: "Mac", local_herdr_version: l, peer_herdr_version: p });
+  it("null on either side = no banner", () => {
+    expect(skewBanners([row(null, "0.9.5"), row("0.9.5", null), row(null, null)])).toEqual([]);
+  });
+  it("equal = no banner", () => {
+    expect(skewBanners([row("0.9.5", "0.9.5")])).toEqual([]);
+  });
+  it("patch diff = warn, minor diff = error, per machine", () => {
+    const b = skewBanners([row("0.9.5", "0.9.6", "a"), row("0.9.5", "0.10.0", "b")]);
+    expect(b.map((x) => [x.machine_id, x.severity])).toEqual([["a", "warn"], ["b", "error"]]);
   });
 });

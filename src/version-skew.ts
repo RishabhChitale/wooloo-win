@@ -38,3 +38,29 @@ export function compareHerdrVersions(local: string, remote: string): SkewResult 
   }
   return { ok: true, severity: "none", message: `Herdr versions match (${local}).` };
 }
+
+export interface SkewBanner {
+  machine_id: string;
+  severity: "warn" | "error";
+  message: string;
+}
+
+interface SkewRow {
+  machine_id: string;
+  peer_label: string;
+  local_herdr_version: string | null;
+  peer_herdr_version: string | null;
+}
+
+/** One banner per machine, only when both versions are known and differ. null on either side = none. */
+export function skewBanners(rows: SkewRow[]): SkewBanner[] {
+  const out: SkewBanner[] = [];
+  for (const r of rows) {
+    if (!r.local_herdr_version || !r.peer_herdr_version) continue;
+    if (r.local_herdr_version === r.peer_herdr_version) continue;
+    const c = compareHerdrVersions(r.local_herdr_version, r.peer_herdr_version);
+    if (c.ok || c.severity === "none") continue;
+    out.push({ machine_id: r.machine_id, severity: c.severity, message: `${r.peer_label}: ${c.message}` });
+  }
+  return out;
+}

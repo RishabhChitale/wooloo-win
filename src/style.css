@@ -48,7 +48,7 @@ dialog .primary { background: var(--accent); color: #11111B; }
 #menu .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 #menu .swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--surface1); padding: 0; font-size: 10px; }
 #menu .cats { display: flex; flex-direction: column; } #menu .cats button { text-align: left; }
-#skew { padding: 6px 12px; font-size: 12px; } #skew.warn { background: #4a4126; color: var(--amber); } #skew.error { background: #4a2633; color: var(--red); }
+#skew > div { padding: 6px 12px; font-size: 12px; } #skew .warn { background: #4a4126; color: var(--amber); } #skew .error { background: #4a2633; color: var(--red); }
 #work { flex: 1; display: flex; min-height: 0; }
 #notes { width: 280px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--sel); }
 #notes .notes-head { padding: 8px 12px; font-size: 11px; letter-spacing: .08em; color: var(--over); } #notes-info { color: var(--red); margin-left: 6px; }

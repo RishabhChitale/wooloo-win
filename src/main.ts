@@ -6,7 +6,7 @@ import { clipboardShortcut, mapKeyEvent } from "./keys";
 import { measureCell, PaneView } from "./terminal";
 import { applyMeta, hostOf, peerNodes, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
 import { CATEGORY_ORDER } from "./grouping";
-import { compareHerdrVersions } from "./version-skew";
+import { skewBanners } from "./version-skew";
 import type { SpaceMetaPatch, Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus } from "./types";
 
 const app = document.getElementById("app")!;
@@ -166,17 +166,14 @@ function openMenu(x: number, y: number, mid: string, w: DisplaySpace) {
 
 const skewEl = document.getElementById("skew")!;
 function renderSkew() {
-  // Worst severity across paired machines whose Herdr versions are both known.
-  let worst: { severity: string; message: string } | null = null;
-  for (const r of syncRows) {
-    if (!r.local_herdr_version || !r.peer_herdr_version) { if (r.state !== "skew") continue; }
-    const c = r.local_herdr_version && r.peer_herdr_version ? compareHerdrVersions(r.local_herdr_version, r.peer_herdr_version) : { ok: false, severity: "warn" as const, message: `Herdr version mismatch with ${r.peer_label}.` };
-    if (c.ok) continue;
-    if (!worst || (c.severity === "error" && worst.severity !== "error")) worst = c;
-  }
-  skewEl.hidden = !worst;
-  skewEl.className = worst?.severity ?? "";
-  skewEl.textContent = worst?.message ?? "";
+  const banners = skewBanners(syncRows);
+  skewEl.replaceChildren(...banners.map((b) => {
+    const d = document.createElement("div");
+    d.className = b.severity;
+    d.textContent = b.message;
+    return d;
+  }));
+  skewEl.hidden = banners.length === 0;
 }
 
 async function refreshMeta() {
