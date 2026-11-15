@@ -191,11 +191,16 @@ Check 'sync: line over 1 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
 Check 'sync: line over 1 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
 if (-not $done) { try { $p.Kill() } catch {} }
 # a line of exactly 1,048,576 bytes (newline not counted) is at the cap and still passes
+# Mac rule (awk, LC_ALL=C): length of the line WITHOUT its newline, in bytes, > 1048576 is refused; ASCII so chars == bytes.
+# Read the output concurrently (started before writing) so the 1 MiB echo cannot fill the pipe and stall the write.
 $p = StartSync $echoCmd
-$p.StandardInput.Write(('y' * 1048576) + "`n"); $p.StandardInput.Close()
 $out = $p.StandardOutput.ReadToEndAsync()
-$done = $p.WaitForExit(30000)
-Check 'sync: line at the cap passes' ($done -and $p.ExitCode -eq 0 -and $out.Wait(5000) -and $out.Result.StartsWith('ECHO:yyyy'))
+$errT = $p.StandardError.ReadToEndAsync()
+$p.StandardInput.Write(('y' * 1048576) + "`n"); $p.StandardInput.Close()
+$done = $p.WaitForExit(60000)
+$okOut = $out.Wait(10000) -and ($out.Result.Length -ge 1048576 + 5) -and $out.Result.StartsWith('ECHO:yyyy')
+Check 'sync: line at the cap passes' ($done -and $p.ExitCode -eq 0 -and $okOut)
+if (-not ($done -and $p.ExitCode -eq 0 -and $okOut)) { Write-Host "     exit $($p.ExitCode) done=$done outlen=$($out.Result.Length) err: $($errT.Result)" }
 if (-not $done) { try { $p.Kill() } catch {} }
 # total over 32 MiB made of many small lines: exit 65, earlier lines stay delivered
 $p = StartSync $echoCmd
