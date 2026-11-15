@@ -311,6 +311,18 @@ mod tests {
     }
 
     #[test]
+    fn decode_mac_style_code_and_rejects_path_field() {
+        // The code carries NO Herdr path: the Mac peer's `{herdr}` is baked into its own dispatcher.
+        let mut c = code();
+        c.target = "rishabh@100.101.102.103".into();
+        let enc = c.encode().unwrap();
+        assert_eq!(PairCode::decode(&enc).unwrap().target, "rishabh@100.101.102.103");
+        let json = serde_json::json!({"target":"me@100.64.1.2","publicKey":c.public_key,"hostKey":c.host_key,"herdrVersion":"0.9.5","session":"wooloo","label":"Mac","herdrPath":"/Users/me/.local/share/wooloo/peer/herdr"});
+        let raw = format!("{CODE_PREFIX}{}", URL_SAFE_NO_PAD.encode(json.to_string()));
+        assert!(PairCode::decode(&raw).is_err());
+    }
+
+    #[test]
     fn decode_rejects_bad_input() {
         assert!(PairCode::decode("nope").is_err());
         assert!(PairCode::decode("wooloo-pair-v1:!!!").is_err());

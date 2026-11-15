@@ -215,7 +215,18 @@ impl SshTransport {
             a.push(p.to_string());
         }
         a.push(host.to_string());
-        a.push(format!("/bin/sh -c {}", sh_quote(&remote_script(&session, bridge))));
+        if crate::meta::valid_alias(host) {
+            // Paired peer: its forced-command dispatcher accepts only allow-listed requests and
+            // substitutes its OWN paired Herdr path (the pair code carries none), so never send a
+            // generic script that guesses `$HOME/.local/bin/herdr`.
+            let verb = match channel {
+                Channel::Api => "api",
+                Channel::Client => "client",
+            };
+            a.push(format!("wooloo-peer {verb} {session}"));
+        } else {
+            a.push(format!("/bin/sh -c {}", sh_quote(&remote_script(&session, bridge))));
+        }
         Ok(a)
     }
 }
@@ -330,5 +341,13 @@ mod tests {
         let a = SshTransport::new("me@box:22".into(), Some("wooloo".into())).args(Channel::Api).unwrap();
         assert!(a.contains(&"-p".to_string()) && a.contains(&"me@box".to_string()));
         assert!(a.last().unwrap().contains("remote-api-bridge"));
+    }
+
+    #[test]
+    fn paired_peer_uses_allowlisted_request() {
+        let t = SshTransport::new("wooloo-peer-studio-mac".into(), Some("wooloo".into()));
+        assert_eq!(t.args(Channel::Api).unwrap().last().unwrap(), "wooloo-peer api wooloo");
+        assert_eq!(t.args(Channel::Client).unwrap().last().unwrap(), "wooloo-peer client wooloo");
+        assert!(!t.args(Channel::Api).unwrap().last().unwrap().contains("herdr"));
     }
 }

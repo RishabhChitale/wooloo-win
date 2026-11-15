@@ -53,6 +53,13 @@ Prerequisites on both: Tailscale signed in to the same tailnet; the same Herdr v
 6. Mac only: it then runs `herdr machine add wooloo-peer-<id> ...`. If that fails the profile is still written and the sheet says so (see UNVERIFIED).
 7. The apps attach to each other's Herdr servers through the bridge forms in the allow-list and start syncing metadata.
 
+Herdr path of the peer: the pair code carries NO path field (six fields only, unknown keys are rejected).
+- For a paired `wooloo-peer-<id>` machine this app sends only allow-listed requests (`wooloo-peer api|client|check <session>`); the peer's dispatcher supplies its own paired Herdr, so nothing assumes `$HOME/.local/bin/herdr`.
+- A Mac peer's own `{herdr}` is the space-free symlink `~/.local/share/wooloo/peer/herdr`, baked into its dispatcher at pairing.
+- Our own Herdr path is `where.exe herdr.exe` at accept time, written forward-slashed and bare into our authorized_keys line as `--herdr`.
+- It is not sent in the code; the Mac uses it only for the `{herdr}` bridge scripts, which need it given out of band.
+- A different, quoted or relative `{herdr}` in a request is refused with exit 64.
+
 Removing a peer = deleting its authorized_keys line and its `wooloo_peers/<id>.*` files.
 
 ## Threat model
