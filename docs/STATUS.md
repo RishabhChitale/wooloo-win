@@ -29,3 +29,9 @@ Goal: Mac wooloo (Swift fork) and Windows wooloo-win (Tauri) are peers: each run
 
 ## UNVERIFIED on real hardware
 Windows ConPTY and ssh.exe bridge, named pipe names, Windows_NT answer to Herdr's machine-add probe, administrators_authorized_keys ACLs, sshd restrict behaviour, canvas rendering/IME, Tailscale ACLs, Swift side live pairing (only CI/XCTest so far).
+
+## Update 2026-11-15
+- Mac 0.3.17.8 released and installed (PR #3 / M6: paired peers as machines, state dot, skew banner). Windows v0.1.0-rc2 prerelease published. Real-PC test: waiting for the user's go (do not start PC/Remote Login steps).
+- Known flaky upstream test: MarkdownPreviewRenderingTests.testLargeTableKeepsScrollingAcrossFocusAndTypographyChanges (failed once on main CI, green on re-dispatch). Upstream test: not touched. Rule: tag only after the main push's CI is green; if red, dispatch ci.yml, wait for green, then re-run Release.
+- Limits: no presence badge for remote Spaces (Herdr exposes no attach data); sidebar with no peers not screenshot-verified.
+- Last functional piece: Swift sync port (shelmet) and Mac metadata sync UI.
