@@ -751,6 +751,6 @@ mod tests {
         assert!(conf.contains("100.121.45.79") && conf.contains("zomato"));
         assert!(!elevated_commands("C:\\ProgramData\\ssh\\administrators_authorized_keys", &line).is_empty());
         assert!(with_include("").starts_with(INCLUDE_LINE));
-        assert_eq!(split_target(&c.target).unwrap(), ("100.121.45.79".to_string(), "zomato".to_string(), 22));
+        assert_eq!(split_target(&c.target).unwrap(), ("zomato".to_string(), "100.121.45.79".to_string(), 22));
     }
 }
