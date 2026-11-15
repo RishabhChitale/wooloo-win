@@ -16,6 +16,8 @@ Set-Content -Path $fake -Encoding ASCII -Value @(
 $fakeSync = Join-Path $tmp 'wooloo-sync.cmd'
 Set-Content -Path $fakeSync -Encoding ASCII -Value @('@echo off', 'echo SYNC:%*', 'exit /b 0')
 $fails = 0
+# Shell binary under test: 'powershell' (Windows PowerShell 5.1, sshd's default shell; must pass) or 'pwsh'. Set WOOLOO_TEST_SHELL.
+$sh = if ($env:WOOLOO_TEST_SHELL) { $env:WOOLOO_TEST_SHELL } else { 'powershell' }
 $al = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\docs\peer-allowlist.json') | ConvertFrom-Json
 $MARKER = $al.marker; $PREFIX = $al.markerPrefix
 $fwd = $fake -replace '\\', '/'
@@ -24,7 +26,7 @@ function Run([string]$req, [string]$peer = 'studio-mac', [string]$stdin = '') {
     $env:SSH_ORIGINAL_COMMAND = $req
     [IO.File]::WriteAllText($inFile, $stdin, (New-Object Text.UTF8Encoding $false))
     $o = Join-Path $tmp 'out.txt'; $e = Join-Path $tmp 'err.txt'
-    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', ('"' + $peer + '"'), '-Herdr', $fake, '-Sync', $fakeSync) `
+    $p = Start-Process $sh -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', ('"' + $peer + '"'), '-Herdr', $fake, '-Sync', $fakeSync) `
         -Wait -PassThru -NoNewWindow -RedirectStandardInput $inFile -RedirectStandardOutput $o -RedirectStandardError $e
     [pscustomobject]@{ Code = $p.ExitCode; Out = (Get-Content $o -Raw); Err = (Get-Content $e -Raw) }
 }
@@ -158,11 +160,11 @@ Set-Content -Path $echoSync -Encoding ASCII -Value @(
     'while ($null -ne ($l = $in.ReadLine())) { [Console]::Out.WriteLine("ECHO:" + $l); [Console]::Out.Flush() }'
 )
 $echoCmd = Join-Path $tmp 'echo-sync.cmd'
-Set-Content -Path $echoCmd -Encoding ASCII -Value @('@echo off', ('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $echoSync + '"'))
+Set-Content -Path $echoCmd -Encoding ASCII -Value @('@echo off', ($sh + ' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $echoSync + '"'))
 function StartSync([string]$syncExe) {
     $env:SSH_ORIGINAL_COMMAND = 'wooloo-peer sync'
     $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = 'powershell'
+    $psi.FileName = $sh
     $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $disp + '" -Peer "studio-mac" -Herdr "' + $fake + '" -Sync "' + $syncExe + '"'
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
@@ -192,7 +194,7 @@ function RunRawSync([byte[]]$payload) {
     $env:SSH_ORIGINAL_COMMAND = 'wooloo-peer sync'
     $raw = Join-Path $tmp 'sync-raw.bin'; $o = Join-Path $tmp 'sync-out.txt'; $e = Join-Path $tmp 'sync-err.txt'
     [IO.File]::WriteAllBytes($raw, $payload)
-    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', '"studio-mac"', '-Herdr', $fake, '-Sync', $echoCmd) `
+    $p = Start-Process $sh -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', '"studio-mac"', '-Herdr', $fake, '-Sync', $echoCmd) `
         -PassThru -NoNewWindow -RedirectStandardInput $raw -RedirectStandardOutput $o -RedirectStandardError $e
     # Windows PowerShell 5.1 quirk: ExitCode reads empty unless the process handle was opened before it exited.
     $null = $p.Handle

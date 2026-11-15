@@ -78,11 +78,18 @@ jobs:
 
   peer-dispatch:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]   # powershell = Windows PowerShell 5.1 (sshd default shell, must pass); pwsh = 7
+    env:
+      WOOLOO_PEER_DIAG: "1"          # byte-count diag on cap refusals; remove once green
+      WOOLOO_TEST_SHELL: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
-      - name: Peer dispatcher tests
-        shell: powershell
-        run: powershell -NoProfile -File tests/peer-dispatch.tests.ps1
+      - name: Peer dispatcher tests (${{ matrix.shell }})
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.shell }} -NoProfile -File tests/peer-dispatch.tests.ps1
       - name: Allow-list drift check
         shell: bash
         run: python scripts/check-allowlist-drift.py
