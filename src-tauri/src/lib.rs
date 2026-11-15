@@ -1,5 +1,6 @@
 //! Thin Tauri glue over wooloo-core. Commands and events follow INTERFACE.md.
 mod pair;
+mod sync;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -15,6 +16,7 @@ struct App {
     file: Mutex<MachinesFile>,
     handles: Mutex<HashMap<String, MachineHandle>>,
     events: tokio::sync::mpsc::UnboundedSender<Event>,
+    sync: sync::SyncState,
 }
 
 type Res<T> = Result<T, String>;
@@ -154,7 +156,7 @@ pub fn run() {
             let path = dir.join("machines.toml");
             let file = MachinesFile::load(&path).map_err(|e| e.to_string())?;
             let (tx, mut rx) = unbounded_channel::<Event>();
-            let state = App { path, file: Mutex::new(file.clone()), handles: Mutex::new(HashMap::new()), events: tx };
+            let state = App { path, file: Mutex::new(file.clone()), handles: Mutex::new(HashMap::new()), events: tx, sync: sync::SyncState::new(wooloo_core::meta::MetaStore::in_dir(&dir)) };
             // Handles are created inside the tauri async runtime.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -175,7 +177,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_machines, add_machine, remove_machine, reconnect_machine, open_space, select_tab,
             focus_pane, send_key, send_paste, resize_viewport, scroll,
-            pair::pair_local_info, pair::pair_review, pair::pair_accept
+            pair::pair_local_info, pair::pair_review, pair::pair_accept,
+            sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running wooloo");
