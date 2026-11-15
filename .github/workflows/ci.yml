@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Peer dispatcher tests (${{ matrix.shell }})
-        shell: ${{ matrix.shell }}
+        shell: bash
         run: ${{ matrix.shell }} -NoProfile -File tests/peer-dispatch.tests.ps1
       - name: Allow-list drift check
         shell: bash
