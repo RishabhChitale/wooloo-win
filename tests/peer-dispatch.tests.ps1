@@ -150,6 +150,66 @@ Denied 'sh -s, oversize stdin' '/bin/sh -s' 'studio-mac' ($PREFIX + ('x' * 17000
 Denied 'sh -s with trailing space in command' '/bin/sh -s ' 'studio-mac' ($PREFIX + "uname -s`nuname -m`n")
 Denied 'sh -c from the request' '/bin/sh -c calc'
 
+# --- sync caps and streaming (wooloo-peer sync -> wooloo-sync exchange) ---
+# Fake wooloo-sync that echoes every stdin line at once (ping-pong), so a buffering dispatcher would deadlock.
+$echoSync = Join-Path $tmp 'echo-sync.ps1'
+Set-Content -Path $echoSync -Encoding ASCII -Value @(
+    '$in = [Console]::In',
+    'while ($null -ne ($l = $in.ReadLine())) { [Console]::Out.WriteLine("ECHO:" + $l); [Console]::Out.Flush() }'
+)
+$echoCmd = Join-Path $tmp 'echo-sync.cmd'
+Set-Content -Path $echoCmd -Encoding ASCII -Value @('@echo off', ('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $echoSync + '"'))
+function StartSync([string]$syncExe) {
+    $env:SSH_ORIGINAL_COMMAND = 'wooloo-peer sync'
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = 'powershell'
+    $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $disp + '" -Peer "studio-mac" -Herdr "' + $fake + '" -Sync "' + $syncExe + '"'
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    [Diagnostics.Process]::Start($psi)
+}
+# lines are delivered one at a time while stdin stays open
+$p = StartSync $echoCmd
+$p.StandardInput.Write("one`n"); $p.StandardInput.Flush()
+$t1 = $p.StandardOutput.ReadLineAsync()
+$got1 = $t1.Wait(15000) -and ($t1.Result -eq 'ECHO:one')
+Check 'sync: first line answered with stdin still open' $got1
+$p.StandardInput.Write("two`n"); $p.StandardInput.Flush()
+$t2 = $p.StandardOutput.ReadLineAsync()
+$got2 = $t2.Wait(15000) -and ($t2.Result -eq 'ECHO:two')
+Check 'sync: second line answered (ping-pong, no deadlock)' $got2
+$p.StandardInput.Close()
+$done = $p.WaitForExit(15000)
+Check 'sync: normal passthrough exits 0 after stdin closes' ($done -and $p.ExitCode -eq 0)
+if (-not $done) { try { $p.Kill() } catch {} }
+# a line over 1 MiB: exit 65 + message
+$p = StartSync $echoCmd
+$errT = $p.StandardError.ReadToEndAsync()
+try { $p.StandardInput.Write(('x' * 1048577) + "`n"); $p.StandardInput.Flush() } catch {}
+$done = $p.WaitForExit(30000)
+Check 'sync: line over 1 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
+Check 'sync: line over 1 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
+if (-not $done) { try { $p.Kill() } catch {} }
+# a line of exactly 1,048,576 bytes (newline not counted) is at the cap and still passes
+$p = StartSync $echoCmd
+$p.StandardInput.Write(('y' * 1048576) + "`n"); $p.StandardInput.Close()
+$out = $p.StandardOutput.ReadToEndAsync()
+$done = $p.WaitForExit(30000)
+Check 'sync: line at the cap passes' ($done -and $p.ExitCode -eq 0 -and $out.Wait(5000) -and $out.Result.StartsWith('ECHO:yyyy'))
+if (-not $done) { try { $p.Kill() } catch {} }
+# total over 32 MiB made of many small lines: exit 65, earlier lines stay delivered
+$p = StartSync $echoCmd
+$errT = $p.StandardError.ReadToEndAsync()
+$outT = $p.StandardOutput.ReadToEndAsync()
+$chunk = ('z' * 1048000) + "`n"
+try { for ($i = 0; $i -lt 34; $i++) { $p.StandardInput.Write($chunk) }; $p.StandardInput.Flush() } catch {}
+$done = $p.WaitForExit(60000)
+Check 'sync: total over 32 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
+Check 'sync: total over 32 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
+Check 'sync: lines before the cap stayed delivered' ($outT.Wait(5000) -and $outT.Result.StartsWith('ECHO:zzzz'))
+if (-not $done) { try { $p.Kill() } catch {} }
+Remove-Item Env:SSH_ORIGINAL_COMMAND -ErrorAction SilentlyContinue
+
 Remove-Item -Recurse -Force $tmp
 if ($fails -gt 0) { Write-Host "$fails failed"; exit 1 }
 Write-Host 'all passed'

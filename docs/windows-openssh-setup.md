@@ -63,8 +63,20 @@ request: it matches it against a fixed list (`wooloo-peer hello|api S|client S|c
 `exec <path> [--session S] remote-api-bridge|remote-client-bridge [--idle-timeout-v1|--check]`), then runs the paired
 `herdr.exe` itself. Anything else exits 64 with `wooloo-peer-bridge: <reason>` on stderr. Same allow-list as the Mac side.
 
+### Sync cap and presence
+
+`wooloo-peer sync` runs `wooloo-sync exchange` with the same caps as the Mac dispatcher: a line over 1 MiB (1,048,576
+bytes) or a stream over 32 MiB (33,554,432 bytes) stops the exchange with `wooloo-peer-bridge: sync input over the size
+limit` on stderr and exit 65. Caps apply to complete lines; lines already forwarded stay delivered. The exchange is
+ping-pong over one open stream, so each line is forwarded and flushed immediately (never buffered to EOF), and the output
+is forwarded as produced. Input is only bytes on a pipe; it is never parsed or evaluated.
+
+Intentionally absent on Windows: the Mac dispatcher's presence files (`~/.local/state/wooloo/peer-presence/<id>.<pid>`
+for bridge requests) and ready-marker framing for sync. The sync request is not marker-framed, and the Windows app does
+not scan for presence yet; add both together if a Windows presence view is wanted.
+
 ## Unverified
 
 Written against the Mac design doc without Herdr's exact preparation-probe strings or a real Windows run:
 Herdr 0.9.5 request strings, multi-line `SSH_ORIGINAL_COMMAND` through Windows sshd, and the effect of `restrict`
-(no PTY) on the bridges. The dispatcher follows the shared `docs/peer-allowlist.json` (19 exact templates); `scripts/check-allowlist-drift.py` keeps its embedded copy in sync.
+(no PTY) on the bridges. The dispatcher follows the shared `docs/peer-allowlist.json` (20 exact templates, revision 2); `scripts/check-allowlist-drift.py` keeps its embedded copy in sync.
