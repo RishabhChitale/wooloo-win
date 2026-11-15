@@ -269,7 +269,12 @@ impl Replica {
             .collect()
     }
 
-    fn is_deleted(&self, uuid: &str) -> bool {
+    /// UUIDs of every known Space, deleted (tombstoned) ones included, sorted.
+    pub fn all_spaces(&self) -> Vec<String> {
+        self.space_uuids().into_iter().map(str::to_owned).collect()
+    }
+
+    pub fn is_deleted(&self, uuid: &str) -> bool {
         self.val(&space_key(uuid), "deleted") == &Value::Bool(true)
     }
 

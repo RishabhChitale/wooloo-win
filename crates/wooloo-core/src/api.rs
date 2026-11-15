@@ -131,7 +131,24 @@ pub struct Workspace {
     pub focused: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_state: Option<String>,
+    /// Labels of other clients attached to this Space, best effort from the snapshot; absent = unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence: Option<Vec<String>>,
     pub tabs: Vec<Tab>,
+}
+
+/// Best-effort attach list: `presence` / `clients` / `attached_clients` on the workspace, as strings or
+/// objects with a `label`/`name`/`client_name`. None when the snapshot carries none of these.
+fn presence_of(w: &Value) -> Option<Vec<String>> {
+    let a = ["presence", "attached_clients", "clients"].iter().find_map(|k| w.get(*k).and_then(Value::as_array))?;
+    Some(
+        a.iter()
+            .filter_map(|c| match c {
+                Value::String(x) => Some(x.clone()),
+                _ => ["label", "name", "client_name"].iter().find_map(|k| os(c, k)),
+            })
+            .collect(),
+    )
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -177,6 +194,7 @@ pub fn nest_snapshot(snap: &Value) -> Result<Vec<Workspace>> {
                 label: s(w, "label"),
                 focused: w.get("focused").and_then(Value::as_bool).unwrap_or(false),
                 agent_state: os(w, "agent_status"),
+                presence: presence_of(w),
                 id: wid,
             }
         })
@@ -201,6 +219,16 @@ mod tests {
         assert_eq!(w[0].tabs.len(), 1);
         assert_eq!(w[0].tabs[0].panes[0].id, "p1");
         assert_eq!(w[0].agent_state.as_deref(), Some("idle"));
+    }
+
+    #[test]
+    fn presence_is_best_effort() {
+        let snap = json!({"workspaces": [
+            {"workspace_id":"w1","clients":[{"label":"studio-mac"},"win-pc"]},
+            {"workspace_id":"w2"}]});
+        let w = nest_snapshot(&snap).unwrap();
+        assert_eq!(w[0].presence.as_deref(), Some(&["studio-mac".to_string(), "win-pc".to_string()][..]));
+        assert_eq!(w[1].presence, None);
     }
 
     #[test]

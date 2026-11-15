@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use wooloo_sync::validate::SPACE_FIELDS;
-use wooloo_sync::{exchange, now_ms, state, Outcome};
+use wooloo_sync::{exchange, now_ms, state, Hlc, Outcome, Rejection, Replica};
 
 /// The allow-listed request that makes the peer run its exchange responder.
 pub const SYNC_REQUEST: &str = "wooloo-peer sync";
@@ -34,6 +34,11 @@ pub struct SyncReport {
     pub rejected: u64,
     pub peer_accepted: u64,
     pub peer_rejected: u64,
+    /// Incoming registers deferred because the peer's clock is too far ahead (clock skew).
+    pub skewed: u64,
+    /// Newest local-node register sent in this exchange (for the `pending` count); not serialised.
+    #[serde(skip)]
+    pub sent_upto: Option<Hlc>,
 }
 
 impl SyncReport {
@@ -79,28 +84,67 @@ impl MetaStore {
         state::update(&self.path, |s| Ok(s.replica.node.clone())).map_err(e)
     }
 
-    /// Every live Space as `{uuid, host, herdr_id, name, category, color, order, notes, pinned_tabs}`.
+    /// Every known Space (deleted ones too, with `deleted: true`), see [`space_record`].
     pub fn get_meta(&self) -> Result<Value> {
         state::update(&self.path, |s| {
             let r = &s.replica;
-            let mut spaces = Vec::new();
-            for uuid in r.live_spaces() {
-                let key = space_key(&uuid);
-                let mut o = Map::new();
-                o.insert("uuid".into(), Value::String(uuid));
-                for f in SPACE_FIELDS.iter().filter(|f| **f != "deleted") {
-                    o.insert((*f).into(), r.val(&key, f).clone());
-                }
-                spaces.push(Value::Object(o));
-            }
+            let spaces: Vec<Value> = r.all_spaces().iter().map(|u| space_record(r, u)).collect();
             Ok(serde_json::json!({ "node": r.node, "spaces": spaces }))
         })
         .map_err(e)
     }
 
+    /// Node id of the peer paired as `machine_id`, once learned from a sync handshake.
+    pub fn peer_node(&self, machine_id: &str) -> Option<String> {
+        self.peers().get(machine_id).and_then(|p| p.get("node")).and_then(Value::as_str).map(str::to_owned)
+    }
+
+    fn peers_path(&self) -> PathBuf {
+        self.path.with_file_name("meta-peers.json")
+    }
+
+    fn peers(&self) -> Map<String, Value> {
+        std::fs::read_to_string(self.peers_path())
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default()
+    }
+
+    /// Remember the peer's node id and how far it has acked our ops, after a successful exchange.
+    pub fn note_synced(&self, machine_id: &str, report: &SyncReport) -> Result<()> {
+        let mut m = self.peers();
+        let mut ent = m.get(machine_id).and_then(Value::as_object).cloned().unwrap_or_default();
+        ent.insert("node".into(), Value::String(report.peer.clone()));
+        if let Some(h) = report.sent_upto {
+            if report.peer_rejected == 0 {
+                ent.insert("acked".into(), h.to_json());
+            }
+        }
+        m.insert(machine_id.to_owned(), Value::Object(ent));
+        let text = serde_json::to_string_pretty(&Value::Object(m)).map_err(e)?;
+        let tmp = self.path.with_file_name("meta-peers.json.tmp");
+        std::fs::write(&tmp, text).map_err(e)?;
+        std::fs::rename(&tmp, self.peers_path()).map_err(e)
+    }
+
+    /// Count of local-node ops newer than what `machine_id` last acked.
+    pub fn pending(&self, machine_id: &str) -> Result<u64> {
+        let acked = self
+            .peers()
+            .get(machine_id)
+            .and_then(|p| p.get("acked"))
+            .and_then(Hlc::from_json)
+            .unwrap_or(Hlc::ZERO);
+        state::update(&self.path, |s| {
+            Ok(s.replica.sorted_regs().iter().filter(|g| g.node == s.replica.node && g.hlc > acked).count() as u64)
+        })
+        .map_err(e)
+    }
+
     /// Set fields on a Space, minting it when it is a new Space hosted on this machine.
-    /// Returns the Space's uuid.
-    pub fn set_space_meta(&self, req: SetMeta) -> Result<String> {
+    /// Returns the full merged Space record (see [`space_record`]).
+    pub fn set_space_meta(&self, req: SetMeta) -> Result<Value> {
         for k in req.fields.keys() {
             if !SPACE_FIELDS.contains(&k.as_str()) || k == "host" || k == "herdr_id" {
                 return Err(Error::Other(format!("field not settable: {k}")));
@@ -136,7 +180,7 @@ impl MetaStore {
             for (f, v) in &req.fields {
                 r.set(&key, f, v.clone(), now)?;
             }
-            Ok(uuid)
+            Ok(space_record(r, &uuid))
         })
         .map_err(e)
     }
@@ -147,20 +191,24 @@ impl MetaStore {
         let (node, regs) = state::update(&self.path, |s| Ok((s.replica.node.clone(), s.replica.sorted_regs()))).map_err(e)?;
         let init = exchange::initiate(input, output, &node, &regs).map_err(e)?;
         let received = init.reply.len() as u64 + init.malformed;
-        let (stored, rejected) = state::update(&self.path, |s| {
+        let (stored, rejected, skewed) = state::update(&self.path, |s| {
             if s.replica.node != node {
                 return Err(wooloo_sync::Error::Invalid("node id changed during the exchange".into()));
             }
             let now = now_ms();
-            let (mut stored, mut rejected) = (0u64, init.malformed);
+            let (mut stored, mut rejected, mut skewed) = (0u64, init.malformed, 0u64);
             for reg in init.reply {
                 match s.replica.apply(reg, now) {
                     Outcome::Stored => stored += 1,
+                    Outcome::Rejected(Rejection::Future) => {
+                        rejected += 1;
+                        skewed += 1;
+                    }
                     Outcome::Rejected(_) => rejected += 1,
                     Outcome::Duplicate | Outcome::Ignored => {}
                 }
             }
-            Ok((stored, rejected))
+            Ok((stored, rejected, skewed))
         })
         .map_err(e)?;
         Ok(SyncReport {
@@ -171,6 +219,8 @@ impl MetaStore {
             rejected,
             peer_accepted: init.accepted,
             peer_rejected: init.rejected,
+            skewed,
+            sent_upto: regs.iter().filter(|g| g.node == node).map(|g| g.hlc).max(),
         })
     }
 
@@ -196,6 +246,8 @@ impl MetaStore {
             peer_rejected: 0,
             sent: done.absorbed.reply.len() as u64,
             stored: 0,
+            skewed: 0,
+            sent_upto: None,
         })
     }
 
@@ -229,6 +281,26 @@ impl MetaStore {
         let _ = child.wait();
         res
     }
+}
+
+/// One Space as the frontend sees it: every allow-listed field's value, `deleted`, and the
+/// hlc of each field that has a register (`{wall, counter}`).
+pub fn space_record(r: &Replica, uuid: &str) -> Value {
+    let key = space_key(uuid);
+    let mut o = Map::new();
+    let mut hlc = Map::new();
+    o.insert("uuid".into(), Value::String(uuid.to_owned()));
+    for f in SPACE_FIELDS.iter().filter(|f| **f != "deleted") {
+        o.insert((*f).into(), r.val(&key, f).clone());
+    }
+    o.insert("deleted".into(), Value::Bool(r.is_deleted(uuid)));
+    for f in SPACE_FIELDS {
+        if let Some(g) = r.get(&key, f) {
+            hlc.insert((*f).into(), g.hlc.to_json());
+        }
+    }
+    o.insert("hlc".into(), Value::Object(hlc));
+    Value::Object(o)
 }
 
 fn space_key(uuid: &str) -> String {
@@ -338,13 +410,39 @@ mod tests {
                 fields: fields(serde_json::json!({"name": "Study", "category": "school"})),
                 ..Default::default()
             })
-            .unwrap();
+            .unwrap()["uuid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let again = MetaStore::new(&p).get_meta().unwrap();
         let sp = &again["spaces"][0];
         assert_eq!(sp["uuid"], uuid);
         assert_eq!(sp["name"], "Study");
         assert_eq!(sp["category"], "school");
         assert_eq!(sp["host"], again["node"]);
+        assert_eq!(sp["deleted"], false);
+        assert!(sp["hlc"]["name"]["wall"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn set_returns_merged_record_and_tracks_pending() {
+        let (a, b) = (MetaStore::new(tmp("rec_a")), MetaStore::new(tmp("rec_b")));
+        let rec = a
+            .set_space_meta(SetMeta {
+                herdr_id: Some("w_1".into()),
+                fields: fields(serde_json::json!({"name": "N"})),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(rec["name"], "N");
+        assert_eq!(rec["host"], a.node().unwrap());
+        assert!(rec["hlc"]["name"]["counter"].is_u64());
+        assert!(a.peer_node("m1").is_none());
+        assert!(a.pending("m1").unwrap() > 0);
+        let (ra, _) = exchange_pair(&a, &b);
+        a.note_synced("m1", &ra).unwrap();
+        assert_eq!(a.peer_node("m1").unwrap(), b.node().unwrap());
+        assert_eq!(a.pending("m1").unwrap(), 0);
     }
 
     #[test]
@@ -368,14 +466,20 @@ mod tests {
                 fields: fields(serde_json::json!({"name": "Mac space", "color": "#112233"})),
                 ..Default::default()
             })
-            .unwrap();
+            .unwrap()["uuid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let ub = b
             .set_space_meta(SetMeta {
                 herdr_id: Some("w_b".into()),
                 fields: fields(serde_json::json!({"name": "Windows space"})),
                 ..Default::default()
             })
-            .unwrap();
+            .unwrap()["uuid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
 
         let (ra, _rb) = exchange_pair(&a, &b);
         assert!(ra.changed());
@@ -399,7 +503,10 @@ mod tests {
                 fields: fields(serde_json::json!({"name": "One"})),
                 ..Default::default()
             })
-            .unwrap();
+            .unwrap()["uuid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         exchange_pair(&a, &b);
         std::thread::sleep(std::time::Duration::from_millis(5));
         b.set_space_meta(SetMeta {
@@ -421,7 +528,10 @@ mod tests {
         let (a, b) = (MetaStore::new(tmp("a3")), MetaStore::new(tmp("b3")));
         let u = a
             .set_space_meta(SetMeta { herdr_id: Some("w_a".into()), ..Default::default() })
-            .unwrap();
+            .unwrap()["uuid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         exchange_pair(&a, &b);
         assert_eq!(b.get_meta().unwrap()["spaces"].as_array().unwrap().len(), 1);
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -432,7 +542,10 @@ mod tests {
         })
         .unwrap();
         exchange_pair(&a, &b);
-        assert!(b.get_meta().unwrap()["spaces"].as_array().unwrap().is_empty());
+        let m = b.get_meta().unwrap();
+        assert_eq!(m["spaces"].as_array().unwrap().len(), 1);
+        assert_eq!(m["spaces"][0]["deleted"], true);
+        assert!(m["spaces"][0]["hlc"]["deleted"]["wall"].as_u64().unwrap() > 0);
     }
 
     #[test]
