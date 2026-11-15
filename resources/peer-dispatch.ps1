@@ -182,7 +182,8 @@ if ($req -ceq '/bin/sh -s') {
     if (-not $body.StartsWith($PREFIX, [StringComparison]::Ordinal)) { Deny 'request not allowed' }
     $entry = Find-Entry 'stdin' $body.Substring($PREFIX.Length)
 } else {
-    $entry = Find-Entry 'argv' $req
+    # Herdr's ssh invocation appends one trailing space to the remote command; the match itself stays exact.
+    $entry = Find-Entry 'argv' ($req -replace ' \z', '')
 }
 if (-not $entry) { Deny 'request not allowed' }
 $session = [string]$script:M['session']

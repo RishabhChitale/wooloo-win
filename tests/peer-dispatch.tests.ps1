@@ -100,6 +100,12 @@ $linCand = Fill ([string]$byName['sh-candidates'].template).Replace($macBrewT, $
 $r = Run '/bin/sh -s' 'studio-mac' ($PREFIX + $linCand)
 Check 'allow Linux candidate script (stdin)' (($r.Code -eq 0) -and ($r.Out -like '*herdr.cmd*'))
 
+# Herdr appends one trailing space to argv commands: accepted (exact match otherwise); two spaces are not
+$r = Run (([string]$byName['herdr-path-probe'].template) + ' ') 'studio-mac' ''
+Check 'allow argv command with one trailing space' (($r.Code -eq 0) -and ($r.Out -like '*herdr.cmd*'))
+$r = Run (([string]$byName['herdr-path-probe'].template) + '  ') 'studio-mac' ''
+Check 'deny argv command with two trailing spaces' ($r.Code -ne 0)
+
 # POSIX-style answers: path probes return /c/... (absolute for a POSIX client) and that form is accepted as {herdr}
 $adv = '/' + $fwd.Substring(0, 1).ToLowerInvariant() + $fwd.Substring(2)
 $r = Req $byName['sh-path-probe']

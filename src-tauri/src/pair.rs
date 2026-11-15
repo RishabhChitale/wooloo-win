@@ -16,6 +16,19 @@ fn config_dir(h: &AppHandle) -> Res<PathBuf> {
     h.path().app_config_dir().map_err(|e| format!("cannot find the wooloo config directory: {e}"))
 }
 
+/// Re-copy the bundled dispatcher over an installed one, so an app update takes effect without re-pairing.
+/// Only when a dispatcher is already installed (i.e. this PC has been paired); failures are ignored.
+pub fn refresh_dispatcher(app: &AppHandle) {
+    let Ok(cfg) = config_dir(app) else { return };
+    let dst = cfg.join(DISPATCHER);
+    if !dst.exists() {
+        return;
+    }
+    if let Ok(src) = app.path().resolve(format!("resources/{DISPATCHER}"), BaseDirectory::Resource) {
+        let _ = std::fs::copy(&src, &dst);
+    }
+}
+
 fn home() -> Res<PathBuf> {
     std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).ok_or_else(|| "no home directory".to_string())
 }

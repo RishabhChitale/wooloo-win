@@ -329,6 +329,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
+            pair::refresh_dispatcher(app.handle());
             let path = dir.join("machines.toml");
             let mut file = MachinesFile::load(&path).map_err(|e| e.to_string())?;
             if !file.dedupe_ssh().is_empty() {
