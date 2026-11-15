@@ -51,7 +51,7 @@ async function createTauriApi(): Promise<Api> {
     addMachine: (m) => invoke("add_machine", m),
     removeMachine: (id) => invoke("remove_machine", { id }),
     reconnectMachine: (id) => invoke("reconnect_machine", { id }),
-    startLocalHerdr: (id) => invoke("start_local_herdr"),
+    startLocalHerdr: () => invoke("start_local_herdr"),
     openSpace: (machineId, workspaceId) => invoke("open_space", { machineId, workspaceId }),
     selectTab: (machineId, tabId) => invoke("select_tab", { machineId, tabId }),
     focusPane: (machineId, paneId) => invoke("focus_pane", { machineId, paneId }),
@@ -227,7 +227,7 @@ export function createMockApi(): Api {
       emitStatus({ machine_id: id, state: "connecting" });
       setTimeout(() => emitStatus({ machine_id: id, state: id === "dead" ? "failed" : "connected", reason: id === "dead" ? "ssh: timed out" : undefined, retry_in_secs: id === "dead" ? 30 : undefined }), 800);
     },
-    startLocalHerdr: async (id) => { emitStatus({ machine_id: id, state: "connecting" }); setTimeout(() => emitStatus({ machine_id: id, state: "connected" }), 800); },
+    startLocalHerdr: async () => {},
     openSpace: async (mid, wid) => {
       const w = snaps[mid]?.workspaces.find((x) => x.id === wid);
       if (!w) return;
