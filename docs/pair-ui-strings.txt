@@ -29,3 +29,7 @@ Copy-box / result text
                            The line to add:   [readonly box]
                            Or paste this into PowerShell run as Administrator:   [readonly box]
 Errors: shown in red from the backend; "Pairing needs the desktop app." in a browser.
+
+Local server errors (red dot reason)
+  Pipe access denied (os error 5):  The Herdr server was started by a different (elevated) user context. Stop it with: herdr server stop (in the window where you started it) and click Start Herdr
+  Rule: never start herdr from an Administrator window; the server's pipe then denies the normal app.

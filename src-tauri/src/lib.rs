@@ -178,13 +178,35 @@ fn herdr_cmd(args: &[&str]) -> std::process::Command {
     c
 }
 
+/// Windows: true if the API pipe exists but refuses us (server started from an elevated window).
+fn pipe_denied() -> bool {
+    #[cfg(windows)]
+    {
+        let name = wooloo_core::transport::pipe_name(&None, wooloo_core::transport::Channel::Api, &None);
+        return match std::fs::OpenOptions::new().read(true).write(true).open(&name) {
+            Err(e) => wooloo_core::manager::is_access_denied_io(&e),
+            Ok(_) => false,
+        };
+    }
+    #[cfg(not(windows))]
+    false
+}
+
 /// Starts this PC's own Herdr server (`herdr server`) detached, with no console window on Windows.
 /// Does nothing (Ok) if a server is already running.
 #[tauri::command]
 fn start_local_herdr() -> Res<()> {
     if let Ok(o) = herdr_cmd(&["status", "server"]).stdin(std::process::Stdio::null()).output() {
         if o.status.success() && status_says_running(&String::from_utf8_lossy(&o.stdout)) {
-            return Ok(());
+            if !pipe_denied() {
+                return Ok(());
+            }
+            // Running but its pipe denies us: stop it (best effort) and start a fresh, non-elevated one.
+            let _ = herdr_cmd(&["server", "stop"]).stdin(std::process::Stdio::null()).output();
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            if pipe_denied() {
+                return Err(wooloo_core::manager::ELEVATED_SERVER_MSG.into());
+            }
         }
     }
     let mut c = herdr_cmd(&["server"]);

@@ -61,6 +61,11 @@ Bad target: must be user@100.x.y.z, here exactly risha@100.104.240.58 (not
 Access denied / Permission denied (publickey): step 3 elevated commands not run, or
   administrators_authorized_keys ACL wrong. Rerun them as Administrator, then
   `Restart-Service sshd`.
+"Access is denied (os error 5)" on the local dot: the Herdr server was started from an
+  Administrator window. Never start herdr from an Administrator window. The app shows: "The Herdr
+  server was started by a different (elevated) user context. Stop it with: herdr server stop (in the
+  window where you started it) and click Start Herdr". Start Herdr also runs `herdr server stop`
+  itself when the server is running but its pipe is denied.
 herdr not found: PC path above missing from PATH or the pairing; run
   `& "C:\Users\risha\.herdr\packages\standalone\releases\0.9.5-x86_64-pc-windows-msvc\herdr.exe" --version`.
 Host key prompt (ssh asks "continue connecting?"): from a plain ssh test, answer yes

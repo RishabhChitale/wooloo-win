@@ -119,6 +119,18 @@ fn is_no_server(e: &Error) -> bool {
     matches!(e, Error::Io(io) if matches!(io.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused))
 }
 
+/// Shown when the Herdr server's pipe refuses us (server started from an elevated window).
+pub const ELEVATED_SERVER_MSG: &str = "The Herdr server was started by a different (elevated) user context. Stop it with: herdr server stop (in the window where you started it) and click Start Herdr";
+
+/// True for Windows "Access is denied" (os error 5) or a PermissionDenied kind.
+pub fn is_access_denied_io(io: &std::io::Error) -> bool {
+    io.kind() == std::io::ErrorKind::PermissionDenied || io.raw_os_error() == Some(5)
+}
+
+fn is_access_denied(e: &Error) -> bool {
+    matches!(e, Error::Io(io) if is_access_denied_io(io))
+}
+
 /// Builds the failure text. `tried` = endpoints attempted, `diag` = transport diagnostics (ssh stderr).
 pub fn build_failure(local: bool, tried: &[String], err: &Error, diag: Option<&str>) -> Failure {
     let list = tried.join(", ");
@@ -129,6 +141,9 @@ pub fn build_failure(local: bool, tried: &[String], err: &Error, diag: Option<&s
                 tried: tried.to_vec(),
                 hint: Some("herdr".into()),
             };
+        }
+        if is_access_denied(err) {
+            return Failure { reason: ELEVATED_SERVER_MSG.into(), tried: tried.to_vec(), hint: Some("herdr server stop".into()) };
         }
         let at = tried.first().map(String::as_str).unwrap_or("the Herdr endpoint");
         return Failure {
@@ -536,6 +551,18 @@ mod tests {
         let f = build_failure(true, &t, &Error::protocol("bad hello"), None);
         assert_eq!(f.reason, "connected to /p/herdr.sock but handshake failed: protocol: bad hello");
         assert_eq!(f.hint, None);
+    }
+
+    #[test]
+    fn local_access_denied_maps_to_elevated_message() {
+        let t = vec![r"\\.\pipe\C:\Users\risha\AppData\Roaming\herdr\herdr.sock".to_string()];
+        let f = build_failure(true, &t, &Error::Io(std::io::Error::from_raw_os_error(5)), None);
+        assert_eq!(f.reason, "The Herdr server was started by a different (elevated) user context. Stop it with: herdr server stop (in the window where you started it) and click Start Herdr");
+        assert_eq!(f.hint.as_deref(), Some("herdr server stop"));
+        let f = build_failure(true, &t, &io(std::io::ErrorKind::PermissionDenied), None);
+        assert_eq!(f.reason, ELEVATED_SERVER_MSG);
+        let f = build_failure(true, &t, &Error::protocol("bad hello"), None);
+        assert!(f.reason.contains("handshake failed"));
     }
 
     #[test]
