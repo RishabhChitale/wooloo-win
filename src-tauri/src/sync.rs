@@ -25,7 +25,7 @@ pub struct MachineSync {
 pub fn local_herdr_version() -> Option<String> {
     static V: OnceLock<Option<String>> = OnceLock::new();
     V.get_or_init(|| {
-        let o = std::process::Command::new("herdr").arg("--version").output().ok()?;
+        let o = std::process::Command::new(wooloo_core::resolve::herdr_program()).arg("--version").output().ok()?;
         if !o.status.success() {
             return None;
         }

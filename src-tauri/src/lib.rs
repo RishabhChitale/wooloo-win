@@ -167,7 +167,7 @@ fn exit_says_already_running(out: &str) -> bool {
 }
 
 fn herdr_cmd(args: &[&str]) -> std::process::Command {
-    let mut c = std::process::Command::new("herdr");
+    let mut c = std::process::Command::new(wooloo_core::resolve::herdr_program());
     c.args(args);
     #[cfg(windows)]
     {
@@ -197,7 +197,17 @@ fn start_local_herdr() -> Res<()> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         c.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
-    let mut child = c.spawn().map_err(|e| format!("could not run `herdr server`: {e} (is Herdr installed and on PATH?)"))?;
+    let mut child = match c.spawn() {
+        Ok(ch) => ch,
+        Err(e) => {
+            wooloo_core::resolve::invalidate();
+            let detail = match wooloo_core::resolve::resolve_herdr() {
+                Ok(r) => format!("resolved {}", r.path.display()),
+                Err(t) => t,
+            };
+            return Err(format!("could not run `herdr server`: {e}. {detail}"));
+        }
+    };
     std::thread::sleep(std::time::Duration::from_millis(700));
     if let Ok(Some(st)) = child.try_wait() {
         let mut err = String::new();

@@ -43,13 +43,20 @@ fn io<'a>(what: &'a str, path: &'a Path) -> impl Fn(std::io::Error) -> String + 
 }
 
 fn herdr_version() -> Res<String> {
-    let t = run("herdr", &["--version"]).ok_or("cannot run `herdr --version`: herdr not found on PATH or it failed")?;
+    let mut r = wooloo_core::resolve::resolve_herdr();
+    if r.is_err() {
+        wooloo_core::resolve::invalidate();
+        r = wooloo_core::resolve::resolve_herdr();
+    }
+    let r = r?;
+    let exe = r.path.to_string_lossy().into_owned();
+    let t = run(&exe, &["--version"]).ok_or_else(|| format!("cannot run `{exe} --version`: it failed. Resolved via:\n  {}", r.tried.join("\n  ")))?;
     let v = t.lines().next().unwrap_or("").trim().trim_start_matches("herdr").trim().to_string();
     if v.is_empty() { Err("`herdr --version` printed nothing".into()) } else { Ok(v) }
 }
 
 fn herdr_path() -> Option<String> {
-    run("where.exe", &["herdr.exe"]).and_then(|t| t.lines().next().map(|l| l.trim().to_string())).filter(|l| !l.is_empty())
+    wooloo_core::resolve::resolve_herdr().ok().map(|r| r.path.to_string_lossy().into_owned())
 }
 
 /// `ssh-keyscan -t ed25519 <addr>`; Err text = exit status + first stderr line (or the spawn error).
@@ -103,6 +110,8 @@ pub struct LocalInfo {
     peer_id: String,
     public_fp: String,
     host_fp: String,
+    /// Absolute path of this PC's herdr executable (resolved from the registry / installer dirs), for display.
+    herdr_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -188,6 +197,7 @@ pub fn pair_local_info(app: AppHandle, target: String, session: Option<String>, 
         peer_id: c.peer_id(),
         public_fp: pairing::fingerprint(&public_key).map_err(s)?,
         host_fp: pairing::fingerprint(&host_key).map_err(s)?,
+        herdr_path: herdr_path(),
     })
 }
 
@@ -202,6 +212,8 @@ pub struct Review {
     host_fp: String,
     admin: bool,
     authorized_keys_path: String,
+    /// Absolute path of this PC's herdr executable, for display (None if not found).
+    herdr_path: Option<String>,
 }
 
 fn authorized_keys_path(admin: bool) -> Res<PathBuf> {
@@ -228,6 +240,7 @@ pub fn pair_review(code: String) -> Res<Review> {
         session: c.session,
         herdr_version: c.herdr_version,
         admin,
+        herdr_path: herdr_path(),
     })
 }
 
