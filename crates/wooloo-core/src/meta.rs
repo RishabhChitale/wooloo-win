@@ -36,6 +36,8 @@ pub struct SyncReport {
     pub peer_rejected: u64,
     /// Incoming registers deferred because the peer's clock is too far ahead (clock skew).
     pub skewed: u64,
+    /// The peer's Herdr version from the sync hello; None = unknown / old peer.
+    pub peer_herdr_version: Option<String>,
     /// Newest local-node register sent in this exchange (for the `pending` count); not serialised.
     #[serde(skip)]
     pub sent_upto: Option<Hlc>,
@@ -188,8 +190,13 @@ impl MetaStore {
     /// Initiator over any blocking stream pair (ssh child pipes, or an in-memory pipe in tests).
     /// The state lock is not held while the stream is in use.
     pub fn sync_over<R: BufRead, W: Write>(&self, input: &mut R, output: &mut W) -> Result<SyncReport> {
+        self.sync_over_with(input, output, None)
+    }
+
+    /// Like [`sync_over`](Self::sync_over), sending `local_version` (this machine's Herdr version) in the hello.
+    pub fn sync_over_with<R: BufRead, W: Write>(&self, input: &mut R, output: &mut W, local_version: Option<&str>) -> Result<SyncReport> {
         let (node, regs) = state::update(&self.path, |s| Ok((s.replica.node.clone(), s.replica.sorted_regs()))).map_err(e)?;
-        let init = exchange::initiate(input, output, &node, &regs).map_err(e)?;
+        let init = exchange::initiate_with(input, output, &node, local_version, &regs).map_err(e)?;
         let received = init.reply.len() as u64 + init.malformed;
         let (stored, rejected, skewed) = state::update(&self.path, |s| {
             if s.replica.node != node {
@@ -220,6 +227,7 @@ impl MetaStore {
             peer_accepted: init.accepted,
             peer_rejected: init.rejected,
             skewed,
+            peer_herdr_version: init.peer_herdr_version,
             sent_upto: regs.iter().filter(|g| g.node == node).map(|g| g.hlc).max(),
         })
     }
@@ -227,9 +235,13 @@ impl MetaStore {
     /// Responder over any blocking stream pair. The real peer runs `wooloo-sync exchange`
     /// instead; this exists so both ends can be tested without ssh.
     pub fn respond_over<R: BufRead, W: Write>(&self, input: &mut R, output: &mut W) -> Result<SyncReport> {
+        self.respond_over_with(input, output, None)
+    }
+
+    pub fn respond_over_with<R: BufRead, W: Write>(&self, input: &mut R, output: &mut W, local_version: Option<&str>) -> Result<SyncReport> {
         let node = self.node()?;
         let path = self.path.clone();
-        let done = exchange::respond(input, output, &node, |_peer, ops, malformed| {
+        let done = exchange::respond_with(input, output, &node, local_version, |_peer, ops, malformed| {
             state::update(&path, |s| {
                 if s.replica.node != node {
                     return Err(wooloo_sync::Error::Invalid("node id changed during the exchange".into()));
@@ -247,12 +259,17 @@ impl MetaStore {
             sent: done.absorbed.reply.len() as u64,
             stored: 0,
             skewed: 0,
+            peer_herdr_version: done.peer_herdr_version,
             sent_upto: None,
         })
     }
 
     /// Sync with a paired machine over ssh. `host_alias` is `wooloo-peer-<id>`.
     pub fn sync_ssh(&self, host_alias: &str) -> Result<SyncReport> {
+        self.sync_ssh_with(host_alias, None)
+    }
+
+    pub fn sync_ssh_with(&self, host_alias: &str, local_version: Option<&str>) -> Result<SyncReport> {
         if !valid_alias(host_alias) {
             return Err(Error::Other("sync needs a paired machine (wooloo-peer-<id>)".into()));
         }
@@ -272,7 +289,7 @@ impl MetaStore {
             }
         };
         let mut from_peer = BufReader::new(from_peer);
-        let res = self.sync_over(&mut from_peer, &mut to_peer);
+        let res = self.sync_over_with(&mut from_peer, &mut to_peer, local_version);
         drop(to_peer);
         if res.is_err() {
             let _ = child.kill();
@@ -422,6 +439,27 @@ mod tests {
         assert_eq!(sp["host"], again["node"]);
         assert_eq!(sp["deleted"], false);
         assert!(sp["hlc"]["name"]["wall"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn hello_carries_herdr_versions() {
+        let a = MetaStore::new(&tmp("hv-a"));
+        let b = MetaStore::new(&tmp("hv-b"));
+        let (a_to_b_w, a_to_b_r) = pipe();
+        let (b_to_a_w, b_to_a_r) = pipe();
+        let b2 = b.clone();
+        let th = std::thread::spawn(move || {
+            let mut r = BufReader::new(a_to_b_r);
+            let mut w = b_to_a_w;
+            b2.respond_over_with(&mut r, &mut w, Some("0.9.4"))
+        });
+        let mut r = BufReader::new(b_to_a_r);
+        let mut w = a_to_b_w;
+        let ra = a.sync_over_with(&mut r, &mut w, Some("0.9.5")).unwrap();
+        drop(w);
+        let rb = th.join().unwrap().unwrap();
+        assert_eq!(ra.peer_herdr_version.as_deref(), Some("0.9.4"));
+        assert_eq!(rb.peer_herdr_version.as_deref(), Some("0.9.5"));
     }
 
     #[test]

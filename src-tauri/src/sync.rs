@@ -3,7 +3,7 @@ use crate::{s, App, Res};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, State};
 use wooloo_core::machines::MachineKind;
 use wooloo_core::meta::{valid_alias, MetaStore, SetMeta, SyncReport};
@@ -16,6 +16,24 @@ pub struct MachineSync {
     pub last_ok_ms: Option<u64>,
     pub last_error: Option<String>,
     pub last_report: Option<SyncReport>,
+    /// Peer's Herdr version from the last successful sync hello (None = never learned / old peer).
+    pub peer_herdr_version: Option<String>,
+}
+
+/// This machine's Herdr version (`herdr --version`), read once and cached. None = herdr missing or
+/// an unusable version string. Call from a blocking context.
+pub fn local_herdr_version() -> Option<String> {
+    static V: OnceLock<Option<String>> = OnceLock::new();
+    V.get_or_init(|| {
+        let o = std::process::Command::new("herdr").arg("--version").output().ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        let t = String::from_utf8_lossy(&o.stdout);
+        let v = t.lines().next()?.trim().trim_start_matches("herdr").trim().to_string();
+        wooloo_sync::exchange::is_herdr_version(&v).then_some(v)
+    })
+    .clone()
 }
 
 /// What `sync_status()` returns and the `sync-status` event carries.
@@ -122,9 +140,8 @@ fn build_status(sync: &SyncState, machine_id: &str, label: &str) -> SyncStatus {
         state: state_of(&m),
         last_ok_ms: m.last_ok_ms,
         pending: sync.store.pending(machine_id).unwrap_or(0),
-        // Herdr versions are not carried by the sync hello (a wire change, see INTERFACE.md): unknown.
-        local_herdr_version: None,
-        peer_herdr_version: None,
+        local_herdr_version: local_herdr_version(),
+        peer_herdr_version: m.peer_herdr_version,
         syncing: m.syncing,
         last_error: m.last_error,
         last_report: m.last_report,
@@ -176,7 +193,8 @@ pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) ->
     let store = sync.store.clone();
     let mid = machine_id.clone();
     let res = blocking(move || {
-        let r = store.sync_ssh(&alias).map_err(s)?;
+        let lv = local_herdr_version();
+        let r = store.sync_ssh_with(&alias, lv.as_deref()).map_err(s)?;
         store.note_synced(&mid, &r).map_err(s)?;
         Ok(r)
     })
@@ -190,6 +208,7 @@ pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) ->
             Ok(r) => {
                 e.last_ok_ms = Some(wooloo_sync::now_ms());
                 e.last_error = None;
+                e.peer_herdr_version = r.peer_herdr_version.clone();
                 e.last_report = Some(r.clone());
             }
             Err(m) => e.last_error = Some(m.clone()),

@@ -25,7 +25,7 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
   Tombstones: deleted Spaces are INCLUDED with deleted:true (and the deleted hlc) so they stay deleted across peers; the UI hides them.
 - sync_now(machine_id) -> SyncReport {peer,sent,received,stored,rejected,peer_accepted,peer_rejected}   // ssh machines only; runs ssh to the paired `wooloo-peer-<id>` alias with the allow-listed request `wooloo-peer sync`
 - sync_status() -> SyncStatus[] {machine_id, peer_label, state:"connecting"|"ok"|"offline"|"skew", last_ok_ms, pending, local_herdr_version, peer_herdr_version, syncing, last_error?, last_report?}
-  last_ok_ms is epoch MILLISECONDS UTC (null/absent = never synced). pending = count of local ops not yet acked by that peer. Herdr versions are strings, null when unknown.
+  last_ok_ms is epoch MILLISECONDS UTC (null/absent = never synced). pending = count of local ops not yet acked by that peer. Herdr versions are strings (`herdr --version`, e.g. "0.9.5"); null = unknown. local_herdr_version is read once from `herdr --version` and cached (null if herdr is missing). peer_herdr_version comes from the sync hello (spec s8.1) and is kept from the last successful round; null = never synced yet or an old peer that does not send it. SyncReport also carries `peer_herdr_version`.
   Replica is persisted in the app config dir as meta-state.json. Allow-list (docs/peer-allowlist.json) is at revision 2 (new entry wooloo-sync).
 - copy text is done in the frontend (navigator.clipboard)
 
