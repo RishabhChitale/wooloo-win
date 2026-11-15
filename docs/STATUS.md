@@ -35,3 +35,16 @@ Windows ConPTY and ssh.exe bridge, named pipe names, Windows_NT answer to Herdr'
 - Known flaky upstream test: MarkdownPreviewRenderingTests.testLargeTableKeepsScrollingAcrossFocusAndTypographyChanges (failed once on main CI, green on re-dispatch). Upstream test: not touched. Rule: tag only after the main push's CI is green; if red, dispatch ci.yml, wait for green, then re-run Release.
 - Limits: no presence badge for remote Spaces (Herdr exposes no attach data); sidebar with no peers not screenshot-verified.
 - Last functional piece: Swift sync port (shelmet) and Mac metadata sync UI.
+
+## WHAT I NEED FROM YOU (one screen; updated 2026-11-15)
+You have ~10 minutes of work at the PC and Mac once docs/PC-TEST.md is final. Everything else is automated and green in CI.
+1. PC: download and run the rc5 installer (link in docs/PC-TEST.md; SmartScreen: More info > Run anyway), over rc4.
+2. PC: open wooloo. The local dot should be green by itself (reload if red). Click Pair device; target should read risha@100.104.240.58; click Generate code.
+3. PC: if the dialog shows an elevated PowerShell block, paste it into an Administrator PowerShell once.
+4. Mac: wooloo > Connections > Pair Device > paste the PC's code > check the fingerprints > Pair. Then copy the Mac's code to the PC's Pair dialog.
+5. Look: PC shows the Mac machine and its Spaces; Mac shows the PC machine and its Spaces. Open one Space on both, type, rename a Space: it should follow within a few seconds.
+6. If anything fails: use Copy diagnostics on both apps and paste them to me (template at the bottom of docs/PC-TEST.md).
+Nothing else is needed from you: no passwords, no keys, no tags.
+
+## Done in this session (Windows)
+rc1 to rc4 shipped; rc5 adds: robust herdr path resolution without PATH (registry, installer dirs, where.exe), local session discovery, retry loop that never gives up, session picker, Pair target editable, ssh-keyscan host key (no admin read).
