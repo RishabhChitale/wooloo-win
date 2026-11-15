@@ -66,6 +66,26 @@ fn remove_machine(app: State<App>, id: String) -> Res<()> {
     Ok(())
 }
 
+/// Chooses which Herdr session a machine uses (`None` = discover automatically). Saved to machines.toml,
+/// then the machine restarts with it. Used when the failure reason says "found sessions: a, b; choose one".
+#[tauri::command(rename_all = "snake_case")]
+fn set_machine_session(app: State<App>, id: String, session: Option<String>) -> Res<Machine> {
+    let session = session.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let m = {
+        let mut f = app.file.lock().unwrap();
+        let m = {
+            let m = f.machines.iter_mut().find(|m| m.id == id).ok_or_else(|| format!("unknown machine {id}"))?;
+            m.session = session;
+            m.validate().map_err(s)?;
+            m.clone()
+        };
+        f.save(&app.path).map_err(s)?;
+        m
+    };
+    app.start(&m);
+    Ok(m)
+}
+
 #[tauri::command]
 fn reconnect_machine(app: State<App>, id: String) -> Res<()> {
     app.handle(&id)?.send(Command::Reconnect);
@@ -272,7 +292,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_machines, add_machine, remove_machine, reconnect_machine, open_space, select_tab,
+            list_machines, add_machine, remove_machine, set_machine_session, reconnect_machine, open_space, select_tab,
             focus_pane, send_key, send_paste, resize_viewport, scroll, start_local_herdr,
             pair::pair_defaults, pair::pair_local_info, pair::pair_review, pair::pair_accept,
             sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status

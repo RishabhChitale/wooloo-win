@@ -10,7 +10,8 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - list_machines() -> Machine[]        Machine {id, label, kind:"local"|"ssh", ssh_target?, session?}
 - add_machine({label, ssh_target, session?}) -> Machine   // args are snake_case (unlike the other commands, which use camelCase keys). Machine also has optional `pipe_path` (local Windows API pipe override, set in machines.toml)
 - remove_machine(id)
-- reconnect_machine(id)
+- set_machine_session({id, session?}) -> Machine   // snake_case keys. Saves the machine's Herdr session to machines.toml (null/empty = auto-discover) and restarts it. Local machines with no session discover their own running sessions on every attempt (`herdr session list --json`, then `\\.\pipe\` names matching herdr*): default session if running, else the only running one, else Failed with reason "found sessions: a, b; choose one" and a hint naming set_machine_session. "default" means the unnamed root session.
+- reconnect_machine(id)       // restarts the attempt now and resets the retry delay to 1 s
 - start_local_herdr() -> void       // spawns `herdr server` detached (hidden window on Windows); errors as a string. The machine reconnects on its own retry or reconnect_machine(id).
 - open_space(machine_id, workspace_id)       // subscribe terminal endpoint for that Space's selected tab
 - select_tab(machine_id, tab_id)
