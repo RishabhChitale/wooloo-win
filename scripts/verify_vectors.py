@@ -106,9 +106,63 @@ for v in D['unitcat_import']:
         fv = {n: c for n, c in f.items() if ok(n, c)}; sv = {n: c for n, c in snap.items() if ok(n, c)}
         ops = [(n, c) for n, c in fv.items() if sv.get(n) != c] + [(n, None) for n in sv if n not in fv]
         ops = [{'key': 'unitcat:' + n, 'field': 'category', 'value': c} for n, c in sorted(ops)]
-        ns = fv  # vector: snapshot keeps only valid entries (spec s7 says 'set to the file', ambiguous)
+        ns = fv  # spec s7: snapshot is the valid entries only
     chk('unitcat_import', v['name'] + ' ops', ops == v['expect_ops'], ops)
     chk('unitcat_import', v['name'] + ' snap', ns == v['expect_snapshot'], ns)
-print({k: c for k, c in counts.items()}, 'skipped: exchange, binding')
+
+def sort_regs(d): return sorted(d.values(), key=lambda r: (r['key'].encode(), r['field'].encode()))
+
+def exchange_model(v):
+    """Spec s8: the responder merges what it received, replies with its registers that differ
+    from or are missing in the received set; the initiator applies the reply."""
+    now = v['now']
+    def raw(ops):  # a replica's stored document is trusted as loaded (no validation, no skew guard)
+        d = {}
+        for o in ops:
+            p = (o['key'], o['field'])
+            if p not in d or rk(o) > rk(d[p]): d[p] = o
+        return d
+    a = raw(v['initiator']); b0 = raw(v['responder'])
+    recv = {(o['key'], o['field']): o for o in v['initiator']}
+    b = dict(b0); acc = rej = 0
+    for op in v['initiator']:
+        if not valid(op) or op['hlc']['wall'] > now + D['max_future_ms']: rej += 1; continue
+        acc += 1; p = (op['key'], op['field'])
+        if p not in b or rk(op) > rk(b[p]): b[p] = op
+    reply = [r for r in sort_regs(b) if recv.get((r['key'], r['field'])) != r]
+    for r in reply:
+        p = (r['key'], r['field'])
+        if valid(r) and r['hlc']['wall'] <= now + D['max_future_ms'] and (p not in a or rk(r) > rk(a[p])): a[p] = r
+    return reply, acc, rej, sort_regs(a), sort_regs(b)
+for v in D['exchange']:
+    reply, acc, rej, ai, bi = exchange_model(v)
+    chk('exchange', v['name'] + ' reply', reply == v['expect_reply'])
+    chk('exchange', v['name'] + ' counts', (acc, rej) == (v['expect_accepted'], v['expect_rejected']), (acc, rej))
+    chk('exchange', v['name'] + ' initiator', ai == v['expect_initiator'])
+    chk('exchange', v['name'] + ' responder', bi == v['expect_responder'])
+
+def binding_model(v):
+    """Spec s3 host binding pass (planning only; minted spaces are None)."""
+    me = v['node']; doc, _, _ = merge(v['registers'], 1 << 62)
+    def val(k, f): return (doc.get((k, f)) or {}).get('value')
+    spaces = sorted({k for k, _ in doc if k.startswith('space:')}, key=lambda k: k[6:].encode())
+    live = [k for k in spaces if val(k, 'deleted') is not True and val(k, 'host') == me]
+    ws = v['workspaces']; ids = {w['herdr_id'] for w in ws}
+    used = set(); out = {}
+    for w in ws:                      # step 1: bound by herdr_id
+        c = [k for k in live if val(k, 'herdr_id') == w['herdr_id'] and k not in used]
+        if c: used.add(c[0]); out[w['herdr_id']] = ('bound', c[0][6:])
+    for w in ws:                      # step 2: rebind by name; step 3: mint
+        if w['herdr_id'] in out: continue
+        c = [k for k in live if k not in used and val(k, 'herdr_id') not in ids and val(k, 'name') == w['label']]
+        if c: used.add(c[0]); out[w['herdr_id']] = ('rebound', c[0][6:])
+        else: out[w['herdr_id']] = ('minted', None)
+    res = [{'herdr_id': w['herdr_id'], 'label': w['label'], 'kind': out[w['herdr_id']][0], 'space': out[w['herdr_id']][1]} for w in ws]
+    return res, [k[6:] for k in live if k not in used]
+for v in D['binding']:
+    res, orph = binding_model(v)
+    chk('binding', v['name'] + ' plan', res == v['expect'], res)
+    chk('binding', v['name'] + ' orphans', orph == v['expect_orphans'], orph)
+print({k: c for k, c in counts.items()})
 for f in fails: print('MISMATCH', f)
 print('FAILS', len(fails)); sys.exit(1 if fails else 0)
