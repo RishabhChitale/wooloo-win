@@ -163,6 +163,23 @@ for v in D['binding']:
     res, orph = binding_model(v)
     chk('binding', v['name'] + ' plan', res == v['expect'], res)
     chk('binding', v['name'] + ' orphans', orph == v['expect_orphans'], orph)
+HV = re.compile(r'[A-Za-z0-9+.-]{1,32}')
+def hello_model(line, own):
+    """Spec s8: t is hello, proto is the integer 1, node is a valid id other than ours;
+    herdr_version is optional and any invalid value counts as absent."""
+    m = json.loads(line); n = m.get('node'); p = m.get('proto')
+    if m.get('t') != 'hello' or isinstance(p, bool) or p != 1 or not isinstance(p, int): return False, None, None
+    if not (isinstance(n, str) and re.fullmatch(r'[a-z0-9-]{1,64}', n)) or n == own: return False, None, None
+    hv = m.get('herdr_version')
+    return True, n, hv if isinstance(hv, str) and HV.fullmatch(hv) else None
+def hello_wire(node, hv):
+    m = {'t': 'hello', 'proto': 1, 'node': node}
+    if hv is not None: m['herdr_version'] = hv
+    return json.dumps(m, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+for v in D.get('hello', []):
+    got = hello_model(v['line'], v['own'])
+    chk('hello', v['name'], got == (v['expect_ok'], v['expect_peer'], v['expect_herdr_version']), got)
+    if v['wire']: chk('hello', v['name'] + ' wire', hello_wire(v['expect_peer'], v['expect_herdr_version']) == v['line'])
 print({k: c for k, c in counts.items()})
 for f in fails: print('MISMATCH', f)
 print('FAILS', len(fails)); sys.exit(1 if fails else 0)

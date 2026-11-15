@@ -402,3 +402,34 @@ fn unitcat_export_writes_python_text_and_skips_unsafe_targets() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1]");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn hello_vectors() {
+    let v = vectors();
+    let cases = section(&v, "hello");
+    assert!(!cases.is_empty());
+    for c in cases {
+        let line = c["line"].as_str().expect("line");
+        let own = c["own"].as_str().expect("own");
+        let m: Map<String, Value> = serde_json::from_str(line).expect("hello line parses");
+        let got = exchange::parse_hello(&m, own);
+        assert_eq!(got.is_ok(), c["expect_ok"].as_bool().unwrap(), "{}: {got:?}", name(c));
+        let want_hv = c["expect_herdr_version"].as_str();
+        if let Ok(h) = &got {
+            assert_eq!(Some(h.node.as_str()), c["expect_peer"].as_str(), "{}", name(c));
+            assert_eq!(h.herdr_version.as_deref(), want_hv, "{}", name(c));
+            assert_eq!(exchange::check_hello(&m, own).unwrap(), h.node, "{}", name(c));
+        }
+        if c["wire"].as_bool().unwrap() {
+            let peer = c["expect_peer"].as_str().expect("wire case has a peer");
+            let mut b = Vec::new();
+            exchange::write_msg(&mut b, &exchange::hello_with(peer, want_hv)).unwrap();
+            assert_eq!(std::str::from_utf8(&b).unwrap(), format!("{line}\n"), "{}", name(c));
+            if want_hv.is_none() {
+                let mut b0 = Vec::new();
+                exchange::write_msg(&mut b0, &exchange::hello(peer)).unwrap();
+                assert_eq!(b0, b, "{}", name(c));
+            }
+        }
+    }
+}

@@ -57,7 +57,9 @@ usage:
 
 environment:
   WOOLOO_SYNC_STATE    state file (default ~/.config/wooloo-sync/state.json)
-  WOOLOO_SYNC_UNITCAT  unit categories file (default ~/.local/state/unit-space-categories.json)";
+  WOOLOO_SYNC_UNITCAT  unit categories file (default ~/.local/state/unit-space-categories.json)
+  WOOLOO_HERDR_VERSION this machine's Herdr version, sent in the hello (optional,
+                       informational; 1-32 chars of [A-Za-z0-9+.-], else not sent)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args_os()
@@ -220,6 +222,12 @@ fn export_unitcats(s: &mut State) {
     }
 }
 
+/// This machine's Herdr version for the hello (spec section 8), from
+/// WOOLOO_HERDR_VERSION only: nothing is run to find it. Invalid values are dropped.
+fn herdr_version() -> Option<String> {
+    std::env::var("WOOLOO_HERDR_VERSION").ok().filter(|v| exchange::is_herdr_version(v))
+}
+
 /// Responder. stdout carries only protocol messages; stderr stays empty.
 fn cmd_exchange() -> Result<()> {
     QUIET.store(true, Ordering::Relaxed);
@@ -235,7 +243,8 @@ fn cmd_exchange() -> Result<()> {
             return Err(e);
         }
     };
-    exchange::respond(&mut input, &mut output, &node, |_peer, ops, malformed| {
+    let version = herdr_version();
+    exchange::respond_with(&mut input, &mut output, &node, version.as_deref(), |_peer, ops, malformed| {
         state::update(&path, |s| {
             if s.replica.node != node {
                 return Err(Error::Invalid("node id changed during the exchange".into()));
@@ -322,7 +331,8 @@ fn cmd_sync(peer: &Peer<'_>) -> Result<()> {
         }
     };
     let mut from_peer = BufReader::new(from_peer);
-    let result = exchange::initiate(&mut from_peer, &mut to_peer, &node, &regs);
+    let version = herdr_version();
+    let result = exchange::initiate_with(&mut from_peer, &mut to_peer, &node, version.as_deref(), &regs);
     // Close our side so the remote command sees EOF.
     drop(to_peer);
     let exchange::Initiated {
@@ -331,6 +341,7 @@ fn cmd_sync(peer: &Peer<'_>) -> Result<()> {
         malformed,
         accepted,
         rejected: peer_rejected,
+        peer_herdr_version,
     } = match result {
         Ok(r) => r,
         Err(e) => {
@@ -368,8 +379,9 @@ fn cmd_sync(peer: &Peer<'_>) -> Result<()> {
         Err(e) => warn(format_args!("warning: cannot wait for {what}: {e}")),
     }
     let (stored, rejected) = applied?;
+    let herdr = peer_herdr_version.map_or_else(String::new, |v| format!(" (herdr {v})"));
     println!(
-        "synced with {peer_node}: sent {}, received {received} ({stored} new, {rejected} rejected); peer accepted {accepted}, rejected {peer_rejected}",
+        "synced with {peer_node}{herdr}: sent {}, received {received} ({stored} new, {rejected} rejected); peer accepted {accepted}, rejected {peer_rejected}",
         regs.len()
     );
     Ok(())

@@ -72,13 +72,48 @@ pub fn write_msg<W: Write>(output: &mut W, msg: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Longest `herdr_version` accepted in a `hello` (bytes).
+pub const HERDR_VERSION_MAX: usize = 32;
+
+/// A `herdr_version` value (section 8): 1 to 32 bytes of ASCII letters,
+/// digits or `+.-`. The same rule as pairing.
+pub fn is_herdr_version(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= HERDR_VERSION_MAX
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-'))
+}
+
 /// `{"t":"hello","proto":1,"node":...}`
 pub fn hello(node: &str) -> Value {
-    json!({"t": "hello", "proto": PROTO, "node": node})
+    hello_with(node, None)
+}
+
+/// `hello` with an optional `herdr_version`. A version that fails
+/// [`is_herdr_version`] is left out, never sent.
+pub fn hello_with(node: &str, herdr_version: Option<&str>) -> Value {
+    let mut v = json!({"t": "hello", "proto": PROTO, "node": node});
+    if let (Some(hv), Value::Object(m)) = (herdr_version.filter(|h| is_herdr_version(h)), &mut v) {
+        m.insert("herdr_version".into(), Value::String(hv.to_owned()));
+    }
+    v
+}
+
+/// What a peer's `hello` said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hello {
+    pub node: String,
+    /// The peer's Herdr version; `None` when absent or not a valid version
+    /// (an invalid value is ignored, never an error).
+    pub herdr_version: Option<String>,
 }
 
 /// Check a peer's `hello` and return its node id.
 pub fn check_hello(m: &Map<String, Value>, own: &str) -> Result<String> {
+    parse_hello(m, own).map(|h| h.node)
+}
+
+/// Check a peer's `hello` and return its node id and Herdr version.
+pub fn parse_hello(m: &Map<String, Value>, own: &str) -> Result<Hello> {
     let t = m.get("t").and_then(Value::as_str).unwrap_or("");
     if t != "hello" {
         return Err(Error::Protocol(format!("expected hello, got `{}`", sanitize(t))));
@@ -102,7 +137,15 @@ pub fn check_hello(m: &Map<String, Value>, own: &str) -> Result<String> {
             "peer has the same node id ({node}) as this machine; two machines must never share a node id"
         )));
     }
-    Ok(node.to_owned())
+    let herdr_version = m
+        .get("herdr_version")
+        .and_then(Value::as_str)
+        .filter(|h| is_herdr_version(h))
+        .map(str::to_owned);
+    Ok(Hello {
+        node: node.to_owned(),
+        herdr_version,
+    })
 }
 
 /// Read `op` messages up to a matching `end`. Returns the ops that parsed, the
@@ -156,6 +199,8 @@ pub fn send_error<W: Write>(output: &mut W, err: &Error) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Responded {
     pub peer: String,
+    /// The `herdr_version` from the peer's hello, if it sent a valid one.
+    pub peer_herdr_version: Option<String>,
     /// Ops received that parsed.
     pub received: u64,
     /// Op messages that did not parse.
@@ -172,8 +217,24 @@ where
     W: Write,
     F: FnOnce(&str, Vec<Register>, u64) -> Result<Absorbed>,
 {
+    respond_with(input, output, node, None, f)
+}
+
+/// [`respond`], with this side's Herdr version in its hello.
+pub fn respond_with<R, W, F>(
+    input: &mut R,
+    output: &mut W,
+    node: &str,
+    herdr_version: Option<&str>,
+    f: F,
+) -> Result<Responded>
+where
+    R: BufRead,
+    W: Write,
+    F: FnOnce(&str, Vec<Register>, u64) -> Result<Absorbed>,
+{
     let mut out = BufWriter::new(output);
-    match respond_inner(input, &mut out, node, f) {
+    match respond_inner(input, &mut out, node, herdr_version, f) {
         Ok(r) => {
             out.flush()?;
             Ok(r)
@@ -185,14 +246,23 @@ where
     }
 }
 
-fn respond_inner<R, W, F>(input: &mut R, out: &mut W, node: &str, f: F) -> Result<Responded>
+fn respond_inner<R, W, F>(
+    input: &mut R,
+    out: &mut W,
+    node: &str,
+    herdr_version: Option<&str>,
+    f: F,
+) -> Result<Responded>
 where
     R: BufRead,
     W: Write,
     F: FnOnce(&str, Vec<Register>, u64) -> Result<Absorbed>,
 {
-    let peer = check_hello(&read_msg(input)?, node)?;
-    write_msg(out, &hello(node))?;
+    let Hello {
+        node: peer,
+        herdr_version: peer_herdr_version,
+    } = parse_hello(&read_msg(input)?, node)?;
+    write_msg(out, &hello_with(node, herdr_version))?;
     out.flush()?;
     let (ops, malformed, _end) = read_ops(input)?;
     let received = ops.len() as u64;
@@ -212,6 +282,7 @@ where
     out.flush()?;
     Ok(Responded {
         peer,
+        peer_herdr_version,
         received,
         malformed,
         absorbed,
@@ -222,6 +293,8 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub struct Initiated {
     pub peer: String,
+    /// The `herdr_version` from the peer's hello, if it sent a valid one.
+    pub peer_herdr_version: Option<String>,
     /// The responder's reply ops that parsed; the caller applies and saves them.
     pub reply: Vec<Register>,
     /// Reply op messages that did not parse.
@@ -238,8 +311,23 @@ where
     R: BufRead,
     W: Write,
 {
+    initiate_with(input, output, node, None, regs)
+}
+
+/// [`initiate`], with this side's Herdr version in its hello.
+pub fn initiate_with<R, W>(
+    input: &mut R,
+    output: &mut W,
+    node: &str,
+    herdr_version: Option<&str>,
+    regs: &[Register],
+) -> Result<Initiated>
+where
+    R: BufRead,
+    W: Write,
+{
     let mut out = BufWriter::new(output);
-    match initiate_inner(input, &mut out, node, regs) {
+    match initiate_inner(input, &mut out, node, herdr_version, regs) {
         Ok(r) => Ok(r),
         Err(e) => {
             send_error(&mut out, &e);
@@ -248,14 +336,23 @@ where
     }
 }
 
-fn initiate_inner<R, W>(input: &mut R, out: &mut W, node: &str, regs: &[Register]) -> Result<Initiated>
+fn initiate_inner<R, W>(
+    input: &mut R,
+    out: &mut W,
+    node: &str,
+    herdr_version: Option<&str>,
+    regs: &[Register],
+) -> Result<Initiated>
 where
     R: BufRead,
     W: Write,
 {
-    write_msg(out, &hello(node))?;
+    write_msg(out, &hello_with(node, herdr_version))?;
     out.flush()?;
-    let peer = check_hello(&read_msg(input)?, node)?;
+    let Hello {
+        node: peer,
+        herdr_version: peer_herdr_version,
+    } = parse_hello(&read_msg(input)?, node)?;
     if regs.len() > MAX_OPS {
         return Err(Error::Protocol(format!("refusing to send more than {MAX_OPS} ops")));
     }
@@ -273,6 +370,7 @@ where
     let count = |name: &str| end.get(name).and_then(Value::as_u64).unwrap_or(0);
     Ok(Initiated {
         peer,
+        peer_herdr_version,
         reply,
         malformed,
         accepted: count("accepted"),
@@ -337,6 +435,51 @@ mod tests {
         assert!(check_hello(&h(json!({"t":"hello","proto":2,"node":"mac-1"})), "win-1").is_err());
         assert!(check_hello(&h(json!({"t":"hello","proto":1,"node":"Mac 1"})), "win-1").is_err());
         assert!(check_hello(&h(json!({"t":"op","proto":1,"node":"mac-1"})), "win-1").is_err());
+    }
+
+    #[test]
+    fn hello_herdr_version_is_optional() {
+        let h = |v: Value| v.as_object().unwrap().clone();
+        let mut line = Vec::new();
+        write_msg(&mut line, &hello_with("mac-1", Some("0.9.5"))).unwrap();
+        assert_eq!(line, b"{\"herdr_version\":\"0.9.5\",\"node\":\"mac-1\",\"proto\":1,\"t\":\"hello\"}\n");
+        // An invalid version is never sent.
+        assert_eq!(hello_with("mac-1", Some("1;rm")), hello("mac-1"));
+        assert_eq!(hello_with("mac-1", Some("")), hello("mac-1"));
+        let got = parse_hello(&h(hello_with("mac-1", Some("0.9.5"))), "win-1").unwrap();
+        assert_eq!(got.herdr_version.as_deref(), Some("0.9.5"));
+        assert_eq!(parse_hello(&h(hello("mac-1")), "win-1").unwrap().herdr_version, None);
+        // Any other value is ignored, not an error.
+        for bad in [json!(95), json!("1;rm"), json!(""), json!("a".repeat(33)), json!(null)] {
+            let m = h(json!({"t":"hello","proto":1,"node":"mac-1","herdr_version":bad}));
+            assert_eq!(parse_hello(&m, "win-1").unwrap().herdr_version, None);
+        }
+        assert!(is_herdr_version(&"a".repeat(32)));
+        assert!(is_herdr_version("1.2.3-rc.1+git.abc"));
+    }
+
+    #[test]
+    fn exchange_carries_both_herdr_versions() {
+        let init_hello = {
+            let mut b = Vec::new();
+            write_msg(&mut b, &hello_with("mac-1", Some("0.9.5"))).unwrap();
+            write_msg(&mut b, &json!({"t":"end","count":0})).unwrap();
+            b
+        };
+        let mut resp_out = Vec::new();
+        let done = respond_with(&mut Cursor::new(init_hello), &mut resp_out, "win-1", Some("0.9.4"), |_, _, _| {
+            Ok(Absorbed {
+                accepted: 0,
+                rejected: 0,
+                reply: Vec::new(),
+            })
+        })
+        .unwrap();
+        assert_eq!(done.peer_herdr_version.as_deref(), Some("0.9.5"));
+        let mut init_out = Vec::new();
+        let got = initiate_with(&mut Cursor::new(resp_out), &mut init_out, "mac-1", Some("0.9.5"), &[]).unwrap();
+        assert_eq!(got.peer, "win-1");
+        assert_eq!(got.peer_herdr_version.as_deref(), Some("0.9.4"));
     }
 
     #[test]

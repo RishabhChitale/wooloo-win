@@ -245,8 +245,8 @@ each message an object with a `t` member. Strictly ping-pong, so neither side
 writes a large payload while the other is also writing (no pipe deadlock).
 
 ```
-initiator -> {"t":"hello","proto":1,"node":"win-07be55d1"}
-responder -> {"t":"hello","proto":1,"node":"mac-3f9a21c0"}
+initiator -> {"t":"hello","proto":1,"node":"win-07be55d1"[,"herdr_version":"0.9.5"]}
+responder -> {"t":"hello","proto":1,"node":"mac-3f9a21c0"[,"herdr_version":"0.9.5"]}
 initiator -> {"t":"op", <register members>}      (all registers, any order)
 initiator -> {"t":"end","count":<n ops sent>}
 responder    applies them, saves its state
@@ -260,6 +260,16 @@ initiator    applies them, saves its state
   and close; the other side then commits nothing from this exchange.
 - `proto` mismatch: the responder answers with an error. Unknown members are
   ignored; unknown `t` is an error.
+- `hello` may carry an optional `herdr_version`: the version of the Herdr
+  server on the sender's machine, a string of 1 to 32 bytes of ASCII letters,
+  digits or `+.-` (the same rule as pairing). It is informational, for a
+  "versions differ" notice; nothing in the merge depends on it. A sender that
+  does not know a valid version leaves the member out (never sends `null`,
+  `""` or a number). A receiver that finds any other value (wrong type, empty,
+  too long, other characters) treats it as absent, never as an error. Peers
+  that predate it ignore it as an unknown member, so `proto` stays 1. The
+  responder learns its own version without running anything at exchange
+  time (section 9): from configuration, or not at all.
 - A side commits (saves) only after it has received a complete `end` whose
   `count` matches the ops read. An interrupted exchange is harmless: the next
   one resends everything.
@@ -289,6 +299,13 @@ already has is, byte for byte:
 > {"field":"name","hlc":{"counter":0,"wall":1763112000000},"key":"space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11","node":"mac-3f9a21c0","t":"op","value":"Study Central"}
 > {"count":1,"t":"end"}
 < {"accepted":1,"count":0,"rejected":0,"t":"end"}
+```
+
+With `herdr_version` (8), the same hellos are:
+
+```
+> {"herdr_version":"0.9.5","node":"win-07be55d1","proto":1,"t":"hello"}
+< {"herdr_version":"0.9.4","node":"mac-3f9a21c0","proto":1,"t":"hello"}
 ```
 
 (`>` initiator to responder, `<` back; the markers are not on the wire.) An
@@ -331,6 +348,12 @@ Pitfalls for the Swift (Mac) side, each of which makes replicas disagree:
 - **Framing.** Flush stdout after each side's `end`. Read with a 1 MiB cap
   per line, and never read the peer's reply before sending your own `end`
   (2-way ping-pong; see above).
+- **Optional `herdr_version`.** Decode it with `as? String` and apply the
+  1-32 byte `[A-Za-z0-9+.-]` rule; on any failure treat it as absent and
+  carry on (do not fail the hello, do not show the raw value). Omit the
+  member when the local version is unknown; `JSONSerialization` turns an
+  optional `nil` into `NSNull` (`null`) if you put it in the dictionary. The
+  `hello` vectors cover both forms and the ignored values.
 - **Member order and duplicates.** `JSONSerialization` dictionaries have no
   order; pass `.sortedKeys` if you want output byte-identical to the Rust
   crate (useful in tests, not required). A message with a duplicated member

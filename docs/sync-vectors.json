@@ -3712,5 +3712,133 @@
     "study central": "school"
    }
   }
+ ],
+ "hello": [
+  {
+   "name": "hello without herdr_version",
+   "own": "win-07be55d1",
+   "line": "{\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": true
+  },
+  {
+   "name": "hello with herdr_version",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"0.9.5\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": "0.9.5",
+   "wire": true
+  },
+  {
+   "name": "herdr_version with build metadata",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"1.2.3-rc.1+git.abc\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": "1.2.3-rc.1+git.abc",
+   "wire": true
+  },
+  {
+   "name": "herdr_version of 32 bytes",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"1.000000000000000000000000000000\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": "1.000000000000000000000000000000",
+   "wire": true
+  },
+  {
+   "name": "herdr_version number is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":95,\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version null is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":null,\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version empty is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version of 33 bytes is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"1.0000000000000000000000000000000\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version with a semicolon is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"1;rm\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version with a space is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"0.9 5\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "herdr_version non-ASCII is ignored",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"0.9.٥\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "unknown members are ignored",
+   "own": "win-07be55d1",
+   "line": "{\"digest\":\"abc\",\"herdr_version\":\"0.9.5\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": true,
+   "expect_peer": "mac-3f9a21c0",
+   "expect_herdr_version": "0.9.5",
+   "wire": false
+  },
+  {
+   "name": "same node id is refused even with herdr_version",
+   "own": "mac-3f9a21c0",
+   "line": "{\"herdr_version\":\"0.9.5\",\"node\":\"mac-3f9a21c0\",\"proto\":1,\"t\":\"hello\"}",
+   "expect_ok": false,
+   "expect_peer": null,
+   "expect_herdr_version": null,
+   "wire": false
+  },
+  {
+   "name": "proto 2 is refused even with herdr_version",
+   "own": "win-07be55d1",
+   "line": "{\"herdr_version\":\"0.9.5\",\"node\":\"mac-3f9a21c0\",\"proto\":2,\"t\":\"hello\"}",
+   "expect_ok": false,
+   "expect_peer": null,
+   "expect_herdr_version": null,
+   "wire": false
+  }
  ]
 }
