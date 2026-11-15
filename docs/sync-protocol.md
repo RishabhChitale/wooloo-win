@@ -274,6 +274,68 @@ initiator    applies them, saves its state
 - A peer whose `node` equals the receiver's own node id is refused (two
   machines must never share a node id).
 
+### 8.1 Wire bytes and implementation pitfalls
+
+Every message is one compact JSON object followed by a single `\n` (a reader
+also accepts `\r\n`). No pretty-printing, no BOM, no blank lines. Member order
+does not matter to a reader, and no implementation may depend on it. The Rust
+crate currently writes members sorted by name, so a complete exchange where
+the Windows app (`win-07be55d1`) pushes one op the Mac (`mac-3f9a21c0`)
+already has is, byte for byte:
+
+```
+> {"node":"win-07be55d1","proto":1,"t":"hello"}
+< {"node":"mac-3f9a21c0","proto":1,"t":"hello"}
+> {"field":"name","hlc":{"counter":0,"wall":1763112000000},"key":"space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11","node":"mac-3f9a21c0","t":"op","value":"Study Central"}
+> {"count":1,"t":"end"}
+< {"accepted":1,"count":0,"rejected":0,"t":"end"}
+```
+
+(`>` initiator to responder, `<` back; the markers are not on the wire.) An
+error is `{"msg":"<text>","t":"error"}`. `proto`, `count`, `accepted`,
+`rejected`, `hlc.wall` and `hlc.counter` are JSON integers with no fraction or
+exponent (`1`, never `1.0` or `1e0`). A reader treats an `hlc` member that is
+not two non-negative integers as a malformed op (counted as rejected), and a
+non-integer `count` in `end` as a protocol error.
+
+Pitfalls for the Swift (Mac) side, each of which makes replicas disagree:
+
+- **Slash escaping.** `JSONSerialization` writes `/` as `\/` unless given
+  `.withoutEscapingSlashes`. That is still valid on the wire, but the
+  canonical text (2.3 step 4, and anything hashed or compared) must not escape
+  `/`. Do not build canonical text with `JSONSerialization` or `JSONEncoder`;
+  write the small canonical encoder by hand and check it against the
+  `canonical` vectors.
+- **Bool vs NSNumber.** `JSONSerialization` decodes `true` and `1` both as
+  `NSNumber`, and `as? Bool` / `as? Int` succeed for either. Validation must
+  tell them apart, e.g. `CFGetTypeID(n) == CFBooleanGetTypeID()`: `deleted:1`
+  and `order:true` are invalid. The `validate` vectors cover both.
+- **Integers vs floats.** Write `wall`/`counter` from `UInt64`/`Int64`,
+  never from a `Double` (e.g. `Date().timeIntervalSince1970 * 1000` must be
+  converted first). When reading, reject an `hlc` given as `1.0`, even though
+  `NSNumber` will happily bridge it to an integer. For `order`, keep the
+  value's kind: integer `2` has canonical text `2`, float `2.5` has `2.5`.
+  Floats use the shortest round-trip form (Swift `"\(double)"` gives `0.1`,
+  not `0.10000000000000001`). `JSONSerialization` on older macOS prints up to
+  17 significant digits, which is another reason not to use it for canonical
+  text. `2.0` and `2` are different canonical texts, so a node should never
+  rewrite one as the other.
+- **Comparing strings.** Swift `String` `==` and `<` use Unicode canonical
+  equivalence (`"é"` precomposed equals `"e\u{301}"`). Every comparison in
+  this spec (node ids, canonical value text, sorting by name bytes) is on
+  UTF-8 bytes: compare `Array(s.utf8)`. Lengths are Unicode scalar counts
+  (`s.unicodeScalars.count`), not `s.count` (grapheme clusters); `notes` is
+  limited in UTF-8 bytes (`s.utf8.count`).
+- **Control characters.** "Text" excludes U+0000-U+001F and U+007F; check
+  `unicodeScalars`, not `Character.isNewline` or similar.
+- **Framing.** Flush stdout after each side's `end`. Read with a 1 MiB cap
+  per line, and never read the peer's reply before sending your own `end`
+  (2-way ping-pong; see above).
+- **Member order and duplicates.** `JSONSerialization` dictionaries have no
+  order; pass `.sortedKeys` if you want output byte-identical to the Rust
+  crate (useful in tests, not required). A message with a duplicated member
+  name is undefined; never send one.
+
 ## 9. Security notes
 
 - The responder only reads stdin, writes stdout, and touches its own state file

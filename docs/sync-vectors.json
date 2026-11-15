@@ -1304,6 +1304,76 @@
     "node": "mac-3f9a21c0"
    },
    "valid": false
+  },
+  {
+   "name": "deleted number 1",
+   "op": {
+    "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+    "field": "deleted",
+    "value": 1,
+    "hlc": {
+     "wall": 1763112000000,
+     "counter": 0
+    },
+    "node": "mac-3f9a21c0"
+   },
+   "valid": false
+  },
+  {
+   "name": "deleted number 0",
+   "op": {
+    "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+    "field": "deleted",
+    "value": 0,
+    "hlc": {
+     "wall": 1763112000000,
+     "counter": 0
+    },
+    "node": "mac-3f9a21c0"
+   },
+   "valid": false
+  },
+  {
+   "name": "order boolean true",
+   "op": {
+    "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+    "field": "order",
+    "value": true,
+    "hlc": {
+     "wall": 1763112000000,
+     "counter": 0
+    },
+    "node": "mac-3f9a21c0"
+   },
+   "valid": false
+  },
+  {
+   "name": "order boolean false",
+   "op": {
+    "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+    "field": "order",
+    "value": false,
+    "hlc": {
+     "wall": 1763112000000,
+     "counter": 0
+    },
+    "node": "mac-3f9a21c0"
+   },
+   "valid": false
+  },
+  {
+   "name": "order float",
+   "op": {
+    "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+    "field": "order",
+    "value": 2.5,
+    "hlc": {
+     "wall": 1763112000000,
+     "counter": 0
+    },
+    "node": "mac-3f9a21c0"
+   },
+   "valid": true
   }
  ],
  "merge": [
