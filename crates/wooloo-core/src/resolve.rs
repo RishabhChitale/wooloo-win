@@ -68,6 +68,44 @@ pub fn installer_dirs(lookup: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     v
 }
 
+/// `<HERDR_HOME or %USERPROFILE%\.herdr>\packages\standalone`.
+pub fn standalone_base(lookup: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let home = lookup("HERDR_HOME").filter(|d| !d.is_empty()).or_else(|| lookup("USERPROFILE").filter(|d| !d.is_empty()).map(|u| format!("{u}\\.herdr")))?;
+    Some(Path::new(&home).join("packages").join("standalone"))
+}
+
+/// Parses the version from a release dir name like `0.9.5-x86_64-pc-windows-msvc` (text before the first `-`).
+pub fn parse_release_version(name: &str) -> Option<Vec<u64>> {
+    let v: Option<Vec<u64>> = name.split('-').next()?.split('.').map(|p| p.parse::<u64>().ok()).collect();
+    v.filter(|v| !v.is_empty())
+}
+
+/// Looks in `<base>\current` first (dir, symlink or junction; `is_file` follows links), then in
+/// `<base>\releases\*` newest version first. Every probe goes to `tried`.
+pub fn find_standalone(base: &Path, tried: &mut Vec<String>) -> Option<PathBuf> {
+    let cur = base.join("current").to_string_lossy().into_owned();
+    if let Some(p) = find_in_dirs(&[cur], "standalone", &|p| p.is_file(), tried) {
+        return Some(p);
+    }
+    let rel = base.join("releases");
+    let mut dirs: Vec<(Vec<u64>, String)> = match std::fs::read_dir(&rel) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                parse_release_version(&n).map(|v| (v, e.path().to_string_lossy().into_owned()))
+            })
+            .collect(),
+        Err(e) => {
+            tried.push(format!("standalone releases {}: {e}", rel.display()));
+            return None;
+        }
+    };
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    let list: Vec<String> = dirs.into_iter().map(|d| d.1).collect();
+    find_in_dirs(&list, "standalone release", &|p| p.is_file(), tried)
+}
+
 const NAMES: [&str; 2] = ["herdr.exe", "herdr"];
 
 /// Looks for `herdr.exe` / `herdr` in each dir (in order). Every probe is appended to `tried`.
@@ -151,6 +189,11 @@ pub fn resolve_uncached() -> Result<Resolved, String> {
     if cfg!(windows) {
         if let Some(p) = find_in_dirs(&inst, "installer dir", &exists, &mut tried) {
             return Ok(Resolved { path: p, tried });
+        }
+        if let Some(b) = standalone_base(&env_lookup) {
+            if let Some(p) = find_standalone(&b, &mut tried) {
+                return Ok(Resolved { path: p, tried });
+            }
         }
         match where_exe() {
             Some(p) => {
@@ -271,5 +314,72 @@ mod tests {
         let mut t2 = Vec::new();
         assert!(find_in_dirs(&dirs, "dir", &|_| false, &mut t2).is_none());
         assert_eq!(t2.len(), 2);
+    }
+
+    #[test]
+    fn release_version_parsing() {
+        assert_eq!(parse_release_version("0.9.5-x86_64-pc-windows-msvc"), Some(vec![0, 9, 5]));
+        assert_eq!(parse_release_version("0.10.0-x86_64-pc-windows-msvc"), Some(vec![0, 10, 0]));
+        assert!(parse_release_version("current").is_none());
+        assert!(parse_release_version("junk-1.2").is_none());
+    }
+
+    fn tree(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("wooloo-resolve-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+    fn touch(p: &Path) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn standalone_picks_newest_release_without_current() {
+        let base = tree("rel");
+        touch(&base.join("releases/0.9.4-x86_64-pc-windows-msvc/herdr.exe"));
+        touch(&base.join("releases/0.9.5-x86_64-pc-windows-msvc/herdr.exe"));
+        touch(&base.join("releases/0.10.0-x86_64-pc-windows-msvc/herdr.exe"));
+        let mut tried = Vec::new();
+        let p = find_standalone(&base, &mut tried).unwrap();
+        assert!(p.to_string_lossy().contains("0.10.0-x86_64-pc-windows-msvc"), "{p:?}");
+        assert!(tried.iter().any(|t| t.contains("standalone") && t.contains("no herdr")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn standalone_prefers_valid_current() {
+        let base = tree("cur");
+        touch(&base.join("releases/0.9.4-x86_64-pc-windows-msvc/herdr.exe"));
+        touch(&base.join("releases/0.9.5-x86_64-pc-windows-msvc/herdr.exe"));
+        touch(&base.join("current/herdr.exe"));
+        let mut tried = Vec::new();
+        let p = find_standalone(&base, &mut tried).unwrap();
+        assert!(p.starts_with(base.join("current")), "{p:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn standalone_falls_back_when_current_empty_and_none_found() {
+        let base = tree("fb");
+        std::fs::create_dir_all(base.join("current")).unwrap();
+        touch(&base.join("releases/0.9.4-x86_64-pc-windows-msvc/herdr.exe"));
+        touch(&base.join("releases/0.9.5-x86_64-pc-windows-msvc/herdr.exe"));
+        let mut tried = Vec::new();
+        let p = find_standalone(&base, &mut tried).unwrap();
+        assert!(p.to_string_lossy().contains("0.9.5-"), "{p:?}");
+        let _ = std::fs::remove_dir_all(&base);
+        let empty = tree("none");
+        let mut t2 = Vec::new();
+        assert!(find_standalone(&empty, &mut t2).is_none());
+        assert!(!t2.is_empty());
+    }
+
+    #[test]
+    fn standalone_base_uses_herdr_home_then_userprofile() {
+        let b = standalone_base(&|k| (k == "USERPROFILE").then(|| "C:\\Users\\risha".to_string())).unwrap();
+        assert!(b.to_string_lossy().contains(".herdr"));
+        let b = standalone_base(&|k| (k == "HERDR_HOME").then(|| "D:\\h".to_string())).unwrap();
+        assert!(b.to_string_lossy().starts_with("D:"));
     }
 }

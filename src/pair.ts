@@ -3,8 +3,8 @@
 import type { Machine } from "./types";
 
 interface Defaults { target: string; user: string; host: string; notes: string[] }
-interface LocalInfo { code: string; peer_id: string; public_fp: string; host_fp: string }
-interface Review { label: string; target: string; session: string; herdr_version: string; peer_id: string; public_fp: string; host_fp: string; admin: boolean; authorized_keys_path: string }
+interface LocalInfo { code: string; peer_id: string; public_fp: string; host_fp: string; herdr_path?: string | null }
+interface Review { label: string; target: string; session: string; herdr_version: string; peer_id: string; public_fp: string; host_fp: string; admin: boolean; authorized_keys_path: string; herdr_path?: string | null }
 interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; elevated_commands: string | null; elevation_reason: string | null; authorized_keys_path: string }
 
 async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
@@ -50,7 +50,7 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
   q("pair-make").addEventListener("click", async () => {
     try {
       const r = await call<LocalInfo>("pair_local_info", { target: q<HTMLInputElement>("pair-target").value });
-      local.innerHTML = `Send this code to the other device (and compare fingerprints there):<br><textarea readonly rows="3" style="width:100%">${esc(r.code)}</textarea>key ${esc(r.public_fp)}<br>host ${esc(r.host_fp)}`;
+      local.innerHTML = `Send this code to the other device (and compare fingerprints there):<br><textarea readonly rows="3" style="width:100%">${esc(r.code)}</textarea>key ${esc(r.public_fp)}<br>host ${esc(r.host_fp)}<br>Herdr: ${esc(r.herdr_path ?? "not found")}`;
     } catch (e) { fail(local, e); }
   });
 
@@ -62,7 +62,7 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
       const r = await call<Review>("pair_review", { code });
       reviewed = code;
       info.innerHTML = `<b>${esc(r.label)}</b> (id ${esc(r.peer_id)}) at <code>${esc(r.target)}</code>, session ${esc(r.session)}, herdr ${esc(r.herdr_version)}<br>
-        key ${esc(r.public_fp)}<br>host ${esc(r.host_fp)}<br>
+        key ${esc(r.public_fp)}<br>host ${esc(r.host_fp)}<br>Herdr: ${esc(r.herdr_path ?? "not found")}<br>
         Accepting lets that device's key run only Herdr bridge commands on this PC (entry in <code>${esc(r.authorized_keys_path)}</code>). Check the fingerprints match what the other device shows.`;
       q("pair-inc").style.display = "block";
       accept.disabled = false;
