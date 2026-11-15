@@ -1,11 +1,11 @@
-import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, MachineSync, MetaChanged, MetaReplica, SetSpaceMetaArgs, SpaceMeta, SurfaceEvent, SyncReport, Unlisten } from "./types";
+import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, SyncStatus, MetaChanged, MetaReplica, SetSpaceMetaArgs, SpaceMeta, SurfaceEvent, SyncReport, Unlisten } from "./types";
 
 // Thin wrapper over Tauri invoke/listen (INTERFACE.md). Outside Tauri (pnpm dev in a browser)
 // a mock backend emits fake machines/spaces/surfaces so the UI works without Rust.
 
 export interface Api {
   listMachines(): Promise<Machine[]>;
-  addMachine(m: { label: string; ssh_target: string; session?: string }): Promise<Machine>;
+  addMachine(m: { label: string; ssh_target: string; session?: string; pipe_path?: string }): Promise<Machine>;
   removeMachine(id: string): Promise<void>;
   reconnectMachine(id: string): Promise<void>;
   openSpace(machineId: string, workspaceId: string): Promise<void>;
@@ -17,9 +17,10 @@ export interface Api {
   scroll(machineId: string, paneId: string, lines: number): Promise<void>;
   // Synced context, exactly as in INTERFACE.md.
   getMeta(): Promise<MetaReplica>;
-  setSpaceMeta(a: SetSpaceMetaArgs): Promise<void>;
+  setSpaceMeta(a: SetSpaceMetaArgs): Promise<SpaceMeta>;
   syncNow(machineId: string): Promise<SyncReport>;
-  syncStatus(): Promise<MachineSync[]>;
+  syncStatus(): Promise<SyncStatus[]>;
+  onSyncStatus(cb: (s: SyncStatus) => void): Promise<Unlisten>;
   onMetaChanged(cb: (e: MetaChanged) => void): Promise<Unlisten>;
   onMachineStatus(cb: (s: MachineStatus) => void): Promise<Unlisten>;
   onSnapshot(cb: (s: Snapshot) => void): Promise<Unlisten>;
@@ -56,11 +57,12 @@ async function createTauriApi(): Promise<Api> {
     resizeViewport: (machineId, cols, rows) => invoke("resize_viewport", { machineId, cols, rows }),
     scroll: (machineId, paneId, lines) => invoke("scroll", { machineId, paneId, lines }),
     getMeta: async () => snakeKeys(await invoke("get_meta")) as MetaReplica,
-    // INTERFACE.md gives set_space_meta as one object {uuid?, herdr_id?, host, fields}; passed as the command's named args.
-    setSpaceMeta: async (a) => { await invoke("set_space_meta", { ...a }); },
+    // INTERFACE.md: set_space_meta takes ONE object {machineId, herdrId, fields, uuid?} and returns the merged Space.
+    setSpaceMeta: async (a) => snakeKeys(await invoke("set_space_meta", { machineId: a.machineId, herdrId: a.herdrId, fields: a.fields, uuid: a.uuid })) as SpaceMeta,
     syncNow: async (machineId) => snakeKeys(await invoke("sync_now", { machineId })) as SyncReport,
-    syncStatus: async () => snakeKeys(await invoke("sync_status")) as MachineSync[],
+    syncStatus: async () => snakeKeys(await invoke("sync_status")) as SyncStatus[],
     onMetaChanged: on<MetaChanged>("meta-changed"),
+    onSyncStatus: on<SyncStatus>("sync-status"),
     onMachineStatus: on<MachineStatus>("machine-status"),
     onSnapshot: on<Snapshot>("snapshot"),
     onSurface: on<SurfaceEvent>("surface"),
@@ -80,6 +82,7 @@ type Listeners = {
   snap: Set<(s: Snapshot) => void>;
   surf: Set<(s: SurfaceEvent) => void>;
   meta: Set<(e: MetaChanged) => void>;
+  sync: Set<(s: SyncStatus) => void>;
 };
 
 const blank = (): Cell => ({ ch: " ", fg: null, bg: null, bold: false, italic: false, underline: false, inverse: false, wide: false });
@@ -97,7 +100,7 @@ function writeText(grid: Cell[][], x: number, y: number, text: string, over: Par
 }
 
 export function createMockApi(): Api {
-  const L: Listeners = { status: new Set(), snap: new Set(), surf: new Set(), meta: new Set() };
+  const L: Listeners = { status: new Set(), snap: new Set(), surf: new Set(), meta: new Set(), sync: new Set() };
   const machines: Machine[] = [
     { id: "local", label: "This PC", kind: "local" },
     { id: "mac", label: "Mac (tailscale)", kind: "ssh", ssh_target: "rishabh@mac", session: "main" },
@@ -126,16 +129,21 @@ export function createMockApi(): Api {
     dead: { machine_id: "dead", state: "failed", reason: "ssh: connect to host old-laptop port 22: timed out", retry_in_secs: 30 },
   };
   const NODE = "pc-node";
-  const hostOf = (mid: string) => (mid === "local" ? NODE : mid);
+  const NODES: Record<string, string> = { local: NODE, mac: "mac-node", dead: "dead-node" };
+  const hostOf = (mid: string) => NODES[mid] ?? mid;
   const uuid = (m: string, h: string) => `mock-${m}-${h}`;
   const metas: SpaceMeta[] = [];
   for (const [mid, sn] of Object.entries(snaps)) sn.workspaces.forEach((w, i) => metas.push({
-    uuid: uuid(mid, w.id), host: hostOf(mid), herdr_id: w.id, name: w.label, category: w.category ?? null, color: null, order: i, notes: null, pinned_tabs: [],
+    uuid: uuid(mid, w.id), host: hostOf(mid), herdr_id: w.id, name: w.label, category: w.category ?? null, color: null, order: i, notes: null, pinned_tabs: [], deleted: false, hlc: {},
   }));
   let lastOk = Date.now() - 2000, syncing = false, lastError: string | undefined;
-  const report: SyncReport = { peer: "mac", sent: 0, received: 0, stored: 0, rejected: 0, peer_accepted: 0, peer_rejected: 0 };
-  const syncRows = (): MachineSync[] => [{ machine_id: "mac", syncing, last_ok_ms: lastOk, last_error: lastError, last_report: report }];
-  const emitMeta = (source: "local" | "sync", mid = "local") => L.meta.forEach((f) => f({ machine_id: mid === "local" ? NODE : mid, source }));
+  const report: SyncReport = { peer: "mac-node", sent: 0, received: 0, stored: 0, rejected: 0, peer_accepted: 0, peer_rejected: 0 };
+  const syncRows = (): SyncStatus[] => [{
+    machine_id: "mac", peer_label: "Mac (tailscale)", state: lastError ? "offline" : "ok", last_ok_ms: lastOk, pending: 0,
+    local_herdr_version: "0.9.2", peer_herdr_version: "0.9.2", syncing, last_error: lastError, last_report: report,
+  }];
+  const emitSync = () => L.sync.forEach((f) => f(syncRows()[0]));
+  const emitMeta = (source: "local" | "sync", mid = "local") => L.meta.forEach((f) => f({ machine_id: mid, source }));
   const typed: Record<string, string> = {};
   const viewport = { cols: 120, rows: 36 };
   const current = new Map<string, string>(); // machine -> tab id
@@ -235,15 +243,19 @@ export function createMockApi(): Api {
     resizeViewport: async (mid, cols, rows) => { viewport.cols = cols; viewport.rows = rows; const tab = current.get(mid); if (tab) emitSurface(mid, tab); },
     scroll: async (mid, pane, lines) => { scrollOff[pane] = Math.max(0, (scrollOff[pane] ?? 0) + lines); const tab = current.get(mid); if (tab) emitSurface(mid, tab); },
     getMeta: async () => ({ node: NODE, spaces: metas.map((m) => ({ ...m })) }),
-    setSpaceMeta: async ({ uuid: u, herdr_id, host, fields }) => {
-      let m = metas.find((x) => (u ? x.uuid === u : x.host === host && x.herdr_id === herdr_id));
+    setSpaceMeta: async ({ machineId, herdrId, fields, uuid: u }) => {
+      const m = metas.find((x) => (u ? x.uuid === u : x.host === hostOf(machineId) && x.herdr_id === herdrId));
       if (!m) throw new Error("unknown space");
       Object.assign(m, fields);
-      emitMeta("local");
+      const t = Date.now();
+      for (const k of Object.keys(fields)) m.hlc[k] = { wall: t, counter: 0 };
+      emitMeta("local", machineId);
+      return { ...m };
     },
-    syncNow: async () => { syncing = false; lastError = undefined; lastOk = Date.now(); emitMeta("sync", "mac"); return { ...report }; },
+    syncNow: async () => { syncing = false; lastError = undefined; lastOk = Date.now(); emitMeta("sync", "mac"); emitSync(); return { ...report }; },
     syncStatus: async () => syncRows(),
     onMetaChanged: (cb) => reg(L.meta, cb),
+    onSyncStatus: (cb) => reg(L.sync, cb),
     onMachineStatus: (cb) => reg(L.status, cb, () => Object.values(status).forEach(cb)),
     onSnapshot: (cb) => reg(L.snap, cb, () => Object.keys(snaps).forEach((id) => { if (status[id].state !== "failed") emitSnap(id); })),
     onSurface: (cb) => reg(L.surf, cb),

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { applyMeta, ago, hostOf, isHexColor, moveOrder, presenceLabel, syncBadge, validName, validNotes } from "./meta";
-import type { SpaceMeta, Workspace } from "./types";
+import type { SpaceMeta, SyncStatus, Workspace } from "./types";
 
 const ws = (id: string, label: string): Workspace => ({ id, label, tabs: [] });
 const meta = (herdr_id: string, o: Partial<SpaceMeta> = {}): SpaceMeta => ({
-  uuid: "u" + herdr_id, host: "local", herdr_id, name: "n" + herdr_id, category: null, color: null, order: 0, notes: null, pinned_tabs: [], ...o,
+  uuid: "u" + herdr_id, host: "local", herdr_id, name: "n" + herdr_id, category: null, color: null, order: 0, notes: null, pinned_tabs: [], deleted: false, hlc: {}, ...o,
 });
 
 describe("applyMeta", () => {
@@ -24,6 +24,10 @@ describe("applyMeta", () => {
     expect(applyMeta("local", [w], [meta("a", { category: null })])[0].category).toBeUndefined();
     expect(applyMeta("local", [w], [meta("a", { category: "school" })])[0].category).toBe("school");
   });
+  it("hides tombstones and applies nothing for an unknown host", () => {
+    expect(applyMeta("local", [ws("a", "A")], [meta("a", { name: "Gone", deleted: true })])[0].label).toBe("A");
+    expect(applyMeta(undefined, [ws("a", "A")], [meta("a", { host: "local", name: "X" })])[0].label).toBe("A");
+  });
   it("carries presence from the snapshot", () => {
     expect(applyMeta("local", [{ ...ws("a", "A"), presence: ["PC", "Mac"] }], [])[0].presence).toEqual(["PC", "Mac"]);
   });
@@ -41,11 +45,15 @@ describe("moveOrder", () => {
 describe("badges", () => {
   it("formats synced / offline / presence", () => {
     const now = 100_000;
-    expect(syncBadge({ machine_id: "m", syncing: false, last_ok_ms: now - 2000 }, "Mac", now)).toBe("synced with Mac just now");
-    expect(syncBadge({ machine_id: "m", syncing: false, last_ok_ms: now - 12000 }, "Mac", now)).toBe("synced with Mac 12s ago");
-    expect(syncBadge({ machine_id: "m", syncing: false, last_error: "ssh timed out" }, "Mac", now)).toBe("offline: ssh timed out");
-    expect(syncBadge({ machine_id: "m", syncing: true }, "Mac", now)).toBe("syncing with Mac…");
-    expect(hostOf({ id: "mac", label: "Mac", kind: "ssh" }, "n1")).toBe("mac");
+    const st = (o: Partial<SyncStatus>): SyncStatus => ({ machine_id: "m", peer_label: "Mac", state: "ok", last_ok_ms: null, pending: 0, local_herdr_version: "0.9.2", peer_herdr_version: "0.9.2", syncing: false, ...o });
+    expect(syncBadge(st({ last_ok_ms: now - 2000 }), "Mac", now)).toBe("synced with Mac just now");
+    expect(syncBadge(st({ last_ok_ms: now - 12000, pending: 3 }), "Mac", now)).toBe("synced with Mac 12s ago · 3 pending");
+    expect(syncBadge(st({ state: "offline", last_error: "ssh timed out" }), "Mac", now)).toBe("offline: ssh timed out");
+    expect(syncBadge(st({ syncing: true }), "Mac", now)).toBe("syncing with Mac…");
+    expect(syncBadge(st({ state: "connecting" }), "Mac", now)).toBe("connecting to Mac…");
+    expect(syncBadge(st({}), "Mac", now)).toBe("not synced with Mac yet");
+    expect(hostOf({ id: "mac", label: "Mac", kind: "ssh" }, "n1", { mac: "mac-node" })).toBe("mac-node");
+    expect(hostOf({ id: "mac", label: "Mac", kind: "ssh" }, "n1")).toBeUndefined();
     expect(hostOf({ id: "local", label: "PC", kind: "local" }, "n1")).toBe("n1");
     expect(ago(125)).toBe("2m ago");
     expect(presenceLabel(["Mac"])).toBe("attached on Mac");

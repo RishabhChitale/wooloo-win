@@ -8,6 +8,7 @@ export interface Machine {
   kind: "local" | "ssh";
   ssh_target?: string;
   session?: string;
+  pipe_path?: string;
 }
 
 export interface MachineStatus {
@@ -72,6 +73,10 @@ export interface SpaceMeta {
   order: number;
   notes: string | null;
   pinned_tabs: string[];
+  /** Tombstone: deleted Spaces are included in get_meta(); the UI hides them. */
+  deleted: boolean;
+  /** Per-field hybrid logical clock of the last write. */
+  hlc: Record<string, { wall: number; counter: number }>;
 }
 /** get_meta() result. `node` is this app's own node id (the `host` of local Spaces). */
 export interface MetaReplica { node: string; spaces: SpaceMeta[] }
@@ -83,12 +88,26 @@ export interface SpaceMetaPatch {
   order?: number;
   notes?: string | null;
   pinned_tabs?: string[];
+  deleted?: boolean;
 }
-/** Argument of set_space_meta. */
-export interface SetSpaceMetaArgs { uuid?: string; herdr_id?: string; host: string; fields: SpaceMetaPatch }
+/** Argument of set_space_meta: ONE object, camelCase keys; returns the full merged Space. */
+export interface SetSpaceMetaArgs { machineId: string; herdrId: string; fields: SpaceMetaPatch; uuid?: string }
 /** sync_now(machine_id) result. */
 export interface SyncReport { peer: string; sent: number; received: number; stored: number; rejected: number; peer_accepted: number; peer_rejected: number }
-/** sync_status() entry, one per paired (ssh) machine. */
-export interface MachineSync { machine_id: string; syncing: boolean; last_ok_ms?: number; last_error?: string; last_report?: SyncReport }
+/** sync_status() entry / event "sync-status", one per paired (ssh) machine. */
+export interface SyncStatus {
+  machine_id: string;
+  peer_label: string;
+  state: "connecting" | "ok" | "offline" | "skew";
+  /** Epoch ms UTC of the last successful round; null/absent = never. */
+  last_ok_ms?: number | null;
+  /** Local ops the peer has not acked yet. */
+  pending: number;
+  local_herdr_version: string | null;
+  peer_herdr_version: string | null;
+  syncing: boolean;
+  last_error?: string | null;
+  last_report?: SyncReport | null;
+}
 /** Event "meta-changed". */
 export interface MetaChanged { machine_id: string; source: "local" | "sync" }

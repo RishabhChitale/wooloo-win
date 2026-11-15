@@ -1,4 +1,4 @@
-import type { Machine, MachineSync, SpaceMeta, Workspace } from "./types";
+import type { Machine, SyncStatus, SpaceMeta, Workspace } from "./types";
 
 export const NAME_MAX = 200;
 export const NOTES_MAX_BYTES = 65536;
@@ -14,15 +14,24 @@ export interface DisplaySpace extends Workspace {
 }
 
 /**
- * `host` of a machine's Spaces in get_meta(): the own node id for the local machine, else the machine id.
- * (INTERFACE.md does not say how an ssh machine maps to a replica `host`; this is an open question.)
+ * `host` of a machine's Spaces in get_meta(): the stable NODE ID of the machine owning the Herdr server.
+ * Local = the app's own node id; a paired ssh machine = the peer node id, known from sync_status().last_report.peer.
+ * Returns undefined while unknown: then no metadata is applied and none must be written (protocol 4.1).
  */
-export const hostOf = (m: Machine, node: string): string => (m.kind === "local" ? node : m.id);
+export const hostOf = (m: Machine, node: string, peers: Record<string, string> = {}): string | undefined =>
+  m.kind === "local" ? node : peers[m.id];
+
+/** machine id -> peer node id, from the sync_status rows that have completed a round. */
+export function peerNodes(rows: SyncStatus[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of rows) if (r.last_report?.peer) out[r.machine_id] = r.last_report.peer;
+  return out;
+}
 
 /** Apply merged metadata to one machine's workspaces: names, categories, colours, notes; sort by order. */
-export function applyMeta(host: string, spaces: Workspace[], metas: SpaceMeta[]): DisplaySpace[] {
+export function applyMeta(host: string | undefined, spaces: Workspace[], metas: SpaceMeta[]): DisplaySpace[] {
   const byId = new Map<string, SpaceMeta>();
-  for (const m of metas) if (m.host === host) byId.set(m.herdr_id, m);
+  for (const m of metas) if (host !== undefined && m.host === host && !m.deleted) byId.set(m.herdr_id, m);
   const out: DisplaySpace[] = [];
   spaces.forEach((w, i) => {
     const m = byId.get(w.id);
@@ -63,12 +72,16 @@ export function ago(secs: number): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
-/** Badge text for a paired machine, e.g. "synced with Mac 2s ago" or "sync failed: ...". `now` is epoch ms. */
-export function syncBadge(s: MachineSync, peerLabel: string, now: number): string {
-  if (s.syncing) return `syncing with ${peerLabel}…`;
-  if (s.last_error) return `offline: ${s.last_error}`;
-  if (s.last_ok_ms === undefined) return `not synced with ${peerLabel} yet`;
-  return `synced with ${peerLabel} ${ago(Math.max(0, (now - s.last_ok_ms) / 1000))}`;
+/** Badge text for a paired machine, e.g. "synced with Mac 2s ago · 3 pending". `now` is epoch ms. */
+export function syncBadge(s: SyncStatus, peerLabel: string, now: number): string {
+  const label = s.peer_label || peerLabel;
+  const pend = s.pending > 0 ? ` · ${s.pending} pending` : "";
+  if (s.syncing) return `syncing with ${label}…${pend}`;
+  if (s.state === "connecting") return `connecting to ${label}…`;
+  if (s.state === "skew") return `Herdr version mismatch with ${label}${pend}`;
+  if (s.state === "offline" || s.last_error) return `offline${s.last_error ? `: ${s.last_error}` : ""}${pend}`;
+  if (s.last_ok_ms == null) return `not synced with ${label} yet${pend}`;
+  return `synced with ${label} ${ago(Math.max(0, (now - s.last_ok_ms) / 1000))}${pend}`;
 }
 
 export function presenceLabel(presence: string[]): string {
