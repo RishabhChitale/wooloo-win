@@ -224,14 +224,103 @@ pub fn with_include(config: &str) -> String {
     }
 }
 
+/// Addresses tried, in order, by `ssh-keyscan -t ed25519 <addr>` to read this PC's own sshd host key
+/// (readable by any user, unlike C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub).
+pub const KEYSCAN_HOSTS: [&str; 3] = ["127.0.0.1", "::1", "localhost"];
+
+/// The ed25519 `type blob` from `ssh-keyscan -t ed25519` output. Lines look like `127.0.0.1 ssh-ed25519 AAAA...`
+/// (host may be `[host]:port` or hashed); `# host:22 SSH-2.0-OpenSSH_9.5` comment lines, blank lines and other
+/// key types (rsa, ecdsa) are skipped. None if no valid ed25519 key is present.
+pub fn parse_keyscan(out: &str) -> Option<String> {
+    out.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).find_map(|l| {
+        let toks: Vec<&str> = l.split_whitespace().collect();
+        let i = toks.iter().take(2).position(|t| *t == "ssh-ed25519")?;
+        let blob = toks.get(i + 1)?;
+        let k = format!("ssh-ed25519 {blob}");
+        valid_key(&k).then_some(k)
+    })
+}
+
+/// One attempt to learn the host key, for building the error message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attempt {
+    /// What was tried, e.g. `ssh-keyscan -t ed25519 127.0.0.1` or the file path.
+    pub what: String,
+    /// Exit status / stderr first line / OS error.
+    pub err: String,
+}
+
+/// Host key lookup order as a pure function: each keyscan address in order, then (only if all failed) the file.
+/// `keyscan` and `file` are the actual I/O, called lazily; the first success wins and later ones are not run.
+pub fn resolve_host_key(
+    mut keyscan: impl FnMut(&str) -> std::result::Result<String, String>,
+    file: impl FnOnce() -> std::result::Result<String, Attempt>,
+    file_path: &str,
+) -> std::result::Result<String, String> {
+    let mut tried: Vec<Attempt> = Vec::new();
+    for h in KEYSCAN_HOSTS {
+        match keyscan(h) {
+            Ok(k) => return Ok(k),
+            Err(e) => tried.push(Attempt { what: format!("ssh-keyscan -t ed25519 {h}"), err: e }),
+        }
+    }
+    match file() {
+        Ok(k) => Ok(k),
+        Err(a) => {
+            tried.push(Attempt { what: format!("read {file_path}"), ..a });
+            Err(host_key_error(&tried))
+        }
+    }
+}
+
+/// Error text naming every attempt and the exact fix.
+pub fn host_key_error(tried: &[Attempt]) -> String {
+    let list: Vec<String> = tried.iter().map(|a| format!("{}: {}", a.what, a.err)).collect();
+    format!(
+        "cannot get this PC's SSH host key. Tried: {}. Fix: start the OpenSSH server (PowerShell as Administrator: Start-Service sshd), \
+         install the OpenSSH client (ssh-keyscan), or run wooloo as administrator once.",
+        list.join(" | ")
+    )
+}
+
+/// PowerShell for an elevated prompt that appends `line` to `path` (administrators_authorized_keys) and locks
+/// its ACL the way sshd requires. Single quotes are doubled so any line is a safe PowerShell literal.
+pub fn elevated_commands(path: &str, line: &str) -> String {
+    let q = |s: &str| s.replace('\'', "''");
+    format!(
+        "$p = '{}'\nNew-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null\nAdd-Content -Path $p -Value '{}' -Encoding ascii\nicacls $p /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'",
+        q(path),
+        q(line)
+    )
+}
+
+/// Parsed `whoami /groups`: (member of the Administrators group, process is elevated).
+/// A non-elevated admin still lists S-1-5-32-544 (deny-only); elevation shows as High (S-1-16-12288) or System integrity.
+pub fn admin_flags(whoami_groups: &str) -> (bool, bool) {
+    let member = whoami_groups.contains("S-1-5-32-544");
+    let elevated = whoami_groups.contains("S-1-16-12288") || whoami_groups.contains("S-1-16-16384");
+    (member, elevated)
+}
+
 /// Runs the system `ssh-keygen` (never bundled crypto).
 fn keygen(args: &[&str]) -> Result<String> {
-    let out = std::process::Command::new("ssh-keygen")
-        .args(args)
+    let mut cmd = std::process::Command::new("ssh-keygen");
+    cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd
         .output()
-        .map_err(|e| Error::Other(format!("cannot run ssh-keygen (install the OpenSSH client): {e}")))?;
+        .map_err(|e| Error::Other(format!("cannot run `ssh-keygen {}` (install the OpenSSH client): {e}", args.join(" "))))?;
     if !out.status.success() {
-        return Err(Error::Other(format!("ssh-keygen: {}", String::from_utf8_lossy(&out.stderr).trim())));
+        return Err(Error::Other(format!(
+            "`ssh-keygen {}` failed ({}): {}",
+            args.join(" "),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -240,11 +329,12 @@ fn keygen(args: &[&str]) -> Result<String> {
 pub fn ensure_device_key(path: &Path) -> Result<String> {
     if !path.exists() {
         if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(d).map_err(|e| Error::Other(format!("cannot create {}: {e}", d.display())))?;
         }
         keygen(&["-q", "-t", "ed25519", "-N", "", "-C", "wooloo-peer", "-f", &path.to_string_lossy()])?;
     }
-    let pubtext = std::fs::read_to_string(format!("{}.pub", path.to_string_lossy()))?;
+    let pubpath = format!("{}.pub", path.to_string_lossy());
+    let pubtext = std::fs::read_to_string(&pubpath).map_err(|e| Error::Other(format!("cannot read {pubpath}: {e}")))?;
     key_of(&pubtext)
 }
 
@@ -263,7 +353,7 @@ pub fn fingerprint(key: &str) -> Result<String> {
         return bad("bad key");
     }
     let tmp = std::env::temp_dir().join(format!("wooloo-fp-{}.pub", uuid::Uuid::new_v4().simple()));
-    std::fs::write(&tmp, format!("{key}\n"))?;
+    std::fs::write(&tmp, format!("{key}\n")).map_err(|e| Error::Other(format!("cannot write {}: {e}", tmp.display())))?;
     let r = keygen(&["-l", "-f", &tmp.to_string_lossy()]);
     let _ = std::fs::remove_file(&tmp);
     let text = r?;
@@ -415,5 +505,93 @@ mod tests {
         assert_eq!(with_include("Host a\n"), format!("{INCLUDE_LINE}\nHost a\n"));
         let once = with_include("Host a\n");
         assert_eq!(with_include(&once), once);
+    }
+
+    const ED_BLOB: &str = "AAAAC3NzaC1lZDI1NTE5AAAAICL2jZ5OHmGEQ+JCAFHyZFZq9g9k+e44/DsZhPfT6/d4";
+    const RSA_BLOB: &str = "AAAAB3NzaC1yc2EAAAADAQABAAAACDEyMzQ1Njc4";
+
+    #[test]
+    fn keyscan_parses_real_lines() {
+        let want = format!("ssh-ed25519 {ED_BLOB}");
+        assert_eq!(parse_keyscan(&format!("127.0.0.1 ssh-ed25519 {ED_BLOB}\n")), Some(want.clone()));
+        // comment lines before/after, CRLF, [host]:port, trailing comment
+        let out = format!("# 127.0.0.1:22 SSH-2.0-OpenSSH_for_Windows_9.5\r\n[127.0.0.1]:2222 ssh-ed25519 {ED_BLOB} extra\r\n# done\r\n");
+        assert_eq!(parse_keyscan(&out), Some(want.clone()));
+        // no host column
+        assert_eq!(parse_keyscan(&format!("ssh-ed25519 {ED_BLOB}")), Some(want.clone()));
+        // rsa line first, ed25519 second
+        let mixed = format!("127.0.0.1 ssh-rsa {RSA_BLOB}\n127.0.0.1 ssh-ed25519 {ED_BLOB}\n");
+        assert_eq!(parse_keyscan(&mixed), Some(want));
+    }
+
+    #[test]
+    fn keyscan_rejects_empty_rsa_only_and_garbage() {
+        assert_eq!(parse_keyscan(""), None);
+        assert_eq!(parse_keyscan("# 127.0.0.1:22 SSH-2.0-OpenSSH_9.5\n"), None);
+        assert_eq!(parse_keyscan(&format!("127.0.0.1 ssh-rsa {RSA_BLOB}\n")), None);
+        assert_eq!(parse_keyscan("127.0.0.1 ssh-ed25519 AAAA\n"), None); // blob not a real key
+        assert_eq!(parse_keyscan("127.0.0.1 ssh-ed25519\n"), None);
+    }
+
+    #[test]
+    fn host_key_order_keyscan_then_file() {
+        use std::cell::RefCell;
+        let good = format!("ssh-ed25519 {ED_BLOB}");
+        let calls = RefCell::new(Vec::<String>::new());
+        // first address works: later addresses and the file are never touched
+        let r = resolve_host_key(
+            |h| { calls.borrow_mut().push(h.into()); Ok(good.clone()) },
+            || panic!("file must not be read"),
+            "F",
+        );
+        assert_eq!(r.unwrap(), good);
+        assert_eq!(*calls.borrow(), vec!["127.0.0.1"]);
+        // first fails, ::1 works
+        calls.borrow_mut().clear();
+        let r = resolve_host_key(
+            |h| { calls.borrow_mut().push(h.into()); if h == "::1" { Ok(good.clone()) } else { Err("exit 255".into()) } },
+            || panic!("file must not be read"),
+            "F",
+        );
+        assert_eq!(r.unwrap(), good);
+        assert_eq!(*calls.borrow(), vec!["127.0.0.1", "::1"]);
+        // all keyscans fail: file is the fallback
+        calls.borrow_mut().clear();
+        let r = resolve_host_key(|h| { calls.borrow_mut().push(h.into()); Err("x".into()) }, || Ok(good.clone()), "F");
+        assert_eq!(r.unwrap(), good);
+        assert_eq!(*calls.borrow(), vec!["127.0.0.1", "::1", "localhost"]);
+    }
+
+    #[test]
+    fn host_key_error_names_every_attempt_and_fix() {
+        let e = resolve_host_key(
+            |h| Err(format!("exit 255: connect to host {h} port 22: Connection refused")),
+            || Err(Attempt { what: String::new(), err: "Access is denied. (os error 5)".into() }),
+            "C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub",
+        )
+        .unwrap_err();
+        for s in ["ssh-keyscan -t ed25519 127.0.0.1", "ssh-keyscan -t ed25519 ::1", "ssh-keyscan -t ed25519 localhost", "Connection refused",
+            "read C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub", "Access is denied. (os error 5)", "Start-Service sshd", "administrator"] {
+            assert!(e.contains(s), "missing {s:?} in {e}");
+        }
+    }
+
+    #[test]
+    fn elevated_script_quotes_and_acl() {
+        let line = "command=\"powershell -File C:/w/p.ps1 -Peer a\",restrict ssh-ed25519 AAAA it's";
+        let s = elevated_commands("C:\\ProgramData\\ssh\\administrators_authorized_keys", line);
+        assert!(s.contains("$p = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'"));
+        assert!(s.contains("it''s"));
+        assert!(s.contains("Add-Content -Path $p -Value '"));
+        assert!(s.contains("icacls $p /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'"));
+    }
+
+    #[test]
+    fn admin_flags_distinguish_member_from_elevated() {
+        let member_only = "BUILTIN\\Administrators Alias S-1-5-32-544 Group used for deny only\nMandatory Label\\Medium Mandatory Level Label S-1-16-8192";
+        assert_eq!(admin_flags(member_only), (true, false));
+        let elevated = "BUILTIN\\Administrators Alias S-1-5-32-544 Enabled group\nMandatory Label\\High Mandatory Level Label S-1-16-12288";
+        assert_eq!(admin_flags(elevated), (true, true));
+        assert_eq!(admin_flags("Everyone S-1-1-0\nMandatory Label\\Medium Mandatory Level Label S-1-16-8192"), (false, false));
     }
 }

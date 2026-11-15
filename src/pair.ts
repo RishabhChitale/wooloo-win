@@ -4,7 +4,7 @@ import type { Machine } from "./types";
 
 interface LocalInfo { code: string; peer_id: string; public_fp: string; host_fp: string }
 interface Review { label: string; target: string; session: string; herdr_version: string; peer_id: string; public_fp: string; host_fp: string; admin: boolean; authorized_keys_path: string }
-interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; authorized_keys_path: string }
+interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; elevated_commands: string | null; elevation_reason: string | null; authorized_keys_path: string }
 
 async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   const w = window as unknown as { __TAURI_INTERNALS__?: unknown };
@@ -64,8 +64,12 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
       const r = await call<Accepted>("pair_accept", { code: reviewed, include_ssh_config: q<HTMLInputElement>("pair-incbox").checked });
       onAdded(r.machine);
       info.innerHTML = r.needs_elevation
-        ? `Paired, but <code>${esc(r.authorized_keys_path)}</code> needs an elevated write. Run PowerShell as Administrator and append this line (see docs/windows-openssh-setup.md):<br><textarea readonly rows="4" style="width:100%">${esc(r.needs_elevation)}</textarea>`
+        ? `Paired, but this PC's <code>${esc(r.authorized_keys_path)}</code> still needs the peer's key (${esc(r.elevation_reason ?? "needs an elevated write")}).<br>
+          The line to add:<br><textarea readonly rows="3" style="width:100%">${esc(r.needs_elevation)}</textarea>
+          Or paste this into PowerShell run as Administrator:<br><textarea id="pair-elev" readonly rows="6" style="width:100%">${esc(r.elevated_commands ?? "")}</textarea>
+          <button id="pair-copy" type="button">Copy commands</button>`
         : `Paired with ${esc(r.machine.label)}.`;
+      info.querySelector("#pair-copy")?.addEventListener("click", () => { void navigator.clipboard?.writeText(r.elevated_commands ?? "").catch(() => {}); });
     } catch (e) { fail(info, e); }
   });
 
