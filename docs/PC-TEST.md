@@ -70,6 +70,14 @@ herdr not found: PC path above missing from PATH or the pairing; run
   `& "C:\Users\risha\.herdr\packages\standalone\releases\0.9.5-x86_64-pc-windows-msvc\herdr.exe" --version`.
 Host key prompt (ssh asks "continue connecting?"): from a plain ssh test, answer yes
   once; if the app hangs on it, pairing did not record the host key: report it.
+tailscale ping works but ssh times out: the path is fine, port 22 is blocked. Causes:
+  1. Tailscale Shields Up on the PC. Check: tailscale debug prefs | findstr /i ShieldsUp
+     Fix: tailscale set --shields-up=false
+  2. Tailscale ACL/tag does not allow port 22 between the two machines (admin console).
+  3. Third-party firewall or Windows Defender Firewall.
+  Already known good: firewall rule wooloo-sshd-tailscale is Enabled/Allow/Any and sshd
+  listens on 0.0.0.0:22, so look at the three causes above first.
+Never start herdr from an Administrator window (see the Administrator note above).
 
 ## Known risks
 - Windows dispatcher answers `uname -s` with "Windows_NT" (resources/peer-dispatch.ps1);
