@@ -11,6 +11,8 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - add_machine({label, ssh_target, session?}) -> Machine   // args are snake_case (unlike the other commands, which use camelCase keys). Machine also has optional `pipe_path` (local Windows API pipe override, set in machines.toml)
 - remove_machine(id)
 - reconnect_machine(id)
+- start_local_herdr(id)  (local machines only; starts the local Herdr server)
+- start_local_herdr() -> void       // spawns `herdr server` detached (hidden window on Windows); errors as a string. The machine reconnects on its own retry or reconnect_machine(id).
 - open_space(machine_id, workspace_id)       // subscribe terminal endpoint for that Space's selected tab
 - select_tab(machine_id, tab_id)
 - focus_pane(machine_id, pane_id)
@@ -30,7 +32,8 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - copy text is done in the frontend (navigator.clipboard)
 
 ## Tauri events (Rust -> frontend, via app.emit)
-- "machine-status"  {machine_id, state:"connected"|"connecting"|"failed", reason?, retry_in_secs?}
+- "machine-status"  {machine_id, state:"connected"|"connecting"|"failed", reason?, retry_in_secs?, tried?:string[], hint?:string}
+  Failed reasons: local, no server: "no Herdr server found: tried <pipe/socket path>; start it with: herdr" (hint:"herdr"; show a Start Herdr button -> start_local_herdr()); local, endpoint reached: "connected to <path> but handshake failed: <err>"; ssh: first line of ssh stderr + "(ssh <target>)". `tried` = endpoints attempted (empty when not failed); `hint` is a command the user can run, absent if none.
 - "meta-changed"    {machine_id, source:"local"|"sync"}   // Space metadata replica changed (machine_id = own node id for local edits)
 - "sync-status"     SyncStatus entry (same shape as sync_status() items)   // emitted on every state change (connecting/ok/offline/skew) and after each sync round
 - "snapshot"        {machine_id, workspaces:[{id,label,category?,presence?:string[],tabs:[{id,label,panes:[{id,...}]}], agent_state?}], ...}  (JSON passed through from herdr session.snapshot, lightly normalised)

@@ -29,6 +29,14 @@ pub trait Transport: Send + Sync {
     fn diagnostics(&self) -> Option<String> {
         None
     }
+    /// Endpoints this transport connects to (for failure reports): socket/pipe paths, or the ssh target.
+    fn endpoints(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// True for a Herdr server on this machine (as opposed to one reached over ssh).
+    fn is_local(&self) -> bool {
+        false
+    }
 }
 
 /// Builds the right transport for a machine.
@@ -89,6 +97,12 @@ impl Transport for UnixTransport {
             .map_err(|_| Error::Timeout("connect"))??;
         Ok(Box::new(s))
     }
+    fn endpoints(&self) -> Vec<String> {
+        vec![self.path(Channel::Api).display().to_string()]
+    }
+    fn is_local(&self) -> bool {
+        true
+    }
 }
 
 // ---------------------------------------------------------------- Windows named pipe
@@ -142,6 +156,12 @@ impl Transport for PipeTransport {
         let name = pipe_name(&self.session, channel, &self.pipe_path);
         let c = tokio::net::windows::named_pipe::ClientOptions::new().open(&name)?;
         Ok(Box::new(c))
+    }
+    fn endpoints(&self) -> Vec<String> {
+        vec![pipe_name(&self.session, Channel::Api, &self.pipe_path)]
+    }
+    fn is_local(&self) -> bool {
+        true
     }
 }
 
@@ -317,6 +337,9 @@ impl Transport for SshTransport {
     fn diagnostics(&self) -> Option<String> {
         let t = self.stderr_tail.lock().unwrap().trim().to_string();
         if t.is_empty() { None } else { Some(t) }
+    }
+    fn endpoints(&self) -> Vec<String> {
+        vec![format!("ssh {}", self.target)]
     }
 }
 

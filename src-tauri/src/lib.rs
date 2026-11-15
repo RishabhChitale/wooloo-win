@@ -133,11 +133,30 @@ fn scroll(app: State<App>, machine_id: String, pane_id: String, lines: i32) -> R
     Ok(())
 }
 
+/// Starts this PC's own Herdr server (`herdr server`) detached, with no console window on Windows.
+#[tauri::command]
+fn start_local_herdr() -> Res<()> {
+    let mut c = std::process::Command::new("herdr");
+    c.arg("server")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+    c.spawn().map(|_| ()).map_err(|e| format!("could not run `herdr server`: {e} (is Herdr installed and on PATH?)"))
+}
+
 fn forward(app: AppHandle, ev: Event) {
     let _ = match ev {
-        Event::Status { machine_id, state, reason, retry_in_secs } => app.emit(
+        Event::Status { machine_id, state, reason, retry_in_secs, tried, hint } => app.emit(
             "machine-status",
-            json!({"machine_id": machine_id, "state": state, "reason": reason, "retry_in_secs": retry_in_secs}),
+            json!({"machine_id": machine_id, "state": state, "reason": reason, "retry_in_secs": retry_in_secs, "tried": tried, "hint": hint}),
         ),
         Event::Snapshot { machine_id, workspaces } => {
             app.emit("snapshot", json!({"machine_id": machine_id, "workspaces": workspaces}))
@@ -176,7 +195,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_machines, add_machine, remove_machine, reconnect_machine, open_space, select_tab,
-            focus_pane, send_key, send_paste, resize_viewport, scroll,
+            focus_pane, send_key, send_paste, resize_viewport, scroll, start_local_herdr,
             pair::pair_local_info, pair::pair_review, pair::pair_accept,
             sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status
         ])

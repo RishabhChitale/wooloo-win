@@ -55,7 +55,16 @@ pub struct PaneSurface {
 /// Events emitted to the host (the Tauri glue maps these 1:1 onto app events).
 #[derive(Debug, Clone)]
 pub enum Event {
-    Status { machine_id: String, state: State, reason: Option<String>, retry_in_secs: Option<u64> },
+    Status {
+        machine_id: String,
+        state: State,
+        reason: Option<String>,
+        retry_in_secs: Option<u64>,
+        /// Endpoints that were tried (failed state only; empty otherwise).
+        tried: Vec<String>,
+        /// What the user can do about it (e.g. `herdr`), if anything.
+        hint: Option<String>,
+    },
     Snapshot { machine_id: String, workspaces: Vec<Workspace> },
     Surface { machine_id: String, tab_id: String, panes: Vec<PaneSurface> },
 }
@@ -95,7 +104,45 @@ pub fn spawn_machine(m: Machine, events: UnboundedSender<Event>) -> MachineHandl
 }
 
 fn status(events: &UnboundedSender<Event>, id: &str, state: State, reason: Option<String>, retry: Option<u64>) {
-    let _ = events.send(Event::Status { machine_id: id.into(), state, reason, retry_in_secs: retry });
+    let _ = events.send(Event::Status { machine_id: id.into(), state, reason, retry_in_secs: retry, tried: Vec::new(), hint: None });
+}
+
+/// A precise, user-facing description of why a machine is unreachable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub reason: String,
+    pub tried: Vec<String>,
+    pub hint: Option<String>,
+}
+
+fn is_no_server(e: &Error) -> bool {
+    matches!(e, Error::Io(io) if matches!(io.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused))
+}
+
+/// Builds the failure text. `tried` = endpoints attempted, `diag` = transport diagnostics (ssh stderr).
+pub fn build_failure(local: bool, tried: &[String], err: &Error, diag: Option<&str>) -> Failure {
+    let list = tried.join(", ");
+    if local {
+        if is_no_server(err) {
+            return Failure {
+                reason: format!("no Herdr server found: tried {list}; start it with: herdr"),
+                tried: tried.to_vec(),
+                hint: Some("herdr".into()),
+            };
+        }
+        let at = tried.first().map(String::as_str).unwrap_or("the Herdr endpoint");
+        return Failure {
+            reason: format!("connected to {at} but handshake failed: {err}"),
+            tried: tried.to_vec(),
+            hint: None,
+        };
+    }
+    let first = diag.and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty()));
+    let reason = match first {
+        Some(l) => format!("{l} ({list})"),
+        None => format!("{err} ({list})"),
+    };
+    Failure { reason, tried: tried.to_vec(), hint: None }
 }
 
 async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: UnboundedReceiver<Command>) {
@@ -122,13 +169,17 @@ async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: Unbound
                 if connected {
                     failures = 0;
                 }
-                let mut reason = e.to_string();
-                if let Some(d) = transport.diagnostics().filter(|d| !d.trim().is_empty()) {
-                    reason = format!("{reason} ({})", d.trim());
-                }
+                let f = build_failure(transport.is_local(), &transport.endpoints(), &e, transport.diagnostics().as_deref());
                 let wait = backoff_secs(failures);
                 failures = failures.saturating_add(1);
-                status(&events, &m.id, State::Failed, Some(reason), Some(wait));
+                let _ = events.send(Event::Status {
+                    machine_id: m.id.clone(),
+                    state: State::Failed,
+                    reason: Some(f.reason),
+                    retry_in_secs: Some(wait),
+                    tried: f.tried,
+                    hint: f.hint,
+                });
                 let sleep = tokio::time::sleep(Duration::from_secs(wait));
                 tokio::pin!(sleep);
                 loop {
@@ -395,5 +446,35 @@ mod tests {
     fn backoff_sequence() {
         let v: Vec<u64> = (0..8).map(backoff_secs).collect();
         assert_eq!(v, vec![1, 2, 4, 8, 16, 30, 30, 30]);
+    }
+
+    fn io(k: std::io::ErrorKind) -> Error {
+        Error::Io(std::io::Error::new(k, "x"))
+    }
+
+    #[test]
+    fn local_missing_server_lists_paths_and_hint() {
+        let t = vec![r"\\.\pipe\C:\a\herdr.sock".to_string()];
+        let f = build_failure(true, &t, &io(std::io::ErrorKind::NotFound), None);
+        assert_eq!(f.reason, format!("no Herdr server found: tried {}; start it with: herdr", t[0]));
+        assert_eq!(f.tried, t);
+        assert_eq!(f.hint.as_deref(), Some("herdr"));
+    }
+
+    #[test]
+    fn local_handshake_failure_names_endpoint() {
+        let t = vec!["/p/herdr.sock".to_string()];
+        let f = build_failure(true, &t, &Error::protocol("bad hello"), None);
+        assert_eq!(f.reason, "connected to /p/herdr.sock but handshake failed: protocol: bad hello");
+        assert_eq!(f.hint, None);
+    }
+
+    #[test]
+    fn ssh_uses_first_stderr_line() {
+        let t = vec!["ssh me@mac".to_string()];
+        let f = build_failure(false, &t, &Error::Timeout("api events connect"), Some("\nssh: connect to host mac port 22: Connection refused\nmore"));
+        assert_eq!(f.reason, "ssh: connect to host mac port 22: Connection refused (ssh me@mac)");
+        let g = build_failure(false, &t, &Error::Timeout("client connect"), None);
+        assert_eq!(g.reason, "timeout: client connect (ssh me@mac)");
     }
 }
