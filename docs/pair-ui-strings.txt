@@ -33,3 +33,17 @@ Errors: shown in red from the backend; "Pairing needs the desktop app." in a bro
 Local server errors (red dot reason)
   Pipe access denied (os error 5):  The Herdr server was started by a different (elevated) user context. Stop it with: herdr server stop (in the window where you started it) and click Start Herdr
   Rule: never start herdr from an Administrator window; the server's pipe then denies the normal app.
+
+Test connection (machine row, lightning icon, title "Test connection"; SSH machines only)
+  Runs read-only, stops at the first failing hop. Lines: "ok|skip|FAIL  <label> - <detail>", then the hint. "Close" hides the result.
+  Labels: Tailscale ping; TCP port 22; SSH login; Herdr bridge; Reverse: peer to this device, TCP 22
+  Reverse (shown after a TCP/SSH failure, informational): tells you to run on the peer: Mac `nc -vz <this device's Tailscale IP> 22`, Windows `Test-NetConnection <ip> -Port 22`.
+  TCP 22 timeout hint: if Shields Up is off, suspect a Tailscale ACL / grant not allowing tcp:22 between the two devices, or a relay-only path ("via DERP"); then the other device's firewall and Remote Login / sshd.
+  Other hints: refused -> turn on SSH server; ssh auth -> pair again (Windows: elevated commands); bridge -> start Herdr on the other device.
+
+Test connection (machine row, lightning icon, title "Test connection"; SSH machines only)
+  Runs read-only, stops at the first failing hop. Lines: "ok|skip|FAIL  <label> - <detail>", then the hint. "Close" hides the result.
+  Labels: Tailscale ping; TCP port 22; SSH login; Herdr bridge; Reverse: peer to this device, TCP 22
+  Reverse (shown after a TCP/SSH failure, informational): run on the peer: Mac `nc -vz <this device's Tailscale IP> 22`, Windows `Test-NetConnection <ip> -Port 22`.
+  TCP 22 timeout hint: if Shields Up is off, suspect a Tailscale ACL / grant not allowing tcp:22 between the two devices, or a relay-only path ("via DERP"); then the other device's firewall and Remote Login / sshd.
+  Other hints: refused -> turn on SSH server; ssh auth -> pair again (Windows: elevated commands); bridge -> start Herdr on the other device.

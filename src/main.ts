@@ -8,7 +8,7 @@ import { applyMeta, hostOf, peerNodes, moveOrder, presenceLabel, syncBadge, vali
 import { CATEGORY_ORDER } from "./grouping";
 import { diagnosticsText, failureView, type FailureView } from "./diagnostics";
 import { skewBanners } from "./version-skew";
-import type { SpaceMetaPatch, Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus } from "./types";
+import type { SpaceMetaPatch, Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus, DiagReport } from "./types";
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev";
@@ -77,6 +77,28 @@ function failureBox(m: Machine, st: MachineStatus | undefined, fv: FailureView):
   return box;
 }
 
+const connTests = new Map<string, DiagReport | "running" | string>();
+function runConnTest(id: string) {
+  connTests.set(id, "running"); renderRail();
+  api.testConnection(id).then((r) => connTests.set(id, r), (e) => connTests.set(id, String(e))).then(() => renderRail());
+}
+function connTestBox(id: string, ct: DiagReport | string): HTMLElement {
+  const box = document.createElement("div"); box.className = "fail conn-test";
+  if (typeof ct === "string") {
+    const l = document.createElement("div"); l.textContent = ct === "running" ? "Testing connection…" : `Test failed to run: ${ct}`; box.appendChild(l);
+  } else {
+    for (const s of ct.steps) {
+      const l = document.createElement("div"); l.className = `conn-step ${s.status}`;
+      l.textContent = `${s.status === "ok" ? "ok" : s.status === "skip" ? "skip" : "FAIL"}  ${s.label}${s.detail ? ` - ${s.detail}` : ""}`; box.appendChild(l);
+    }
+    if (ct.hint) { const h = document.createElement("div"); h.className = "conn-hint"; h.textContent = ct.hint; box.appendChild(h); }
+  }
+  if (ct !== "running") {
+    const b = document.createElement("button"); b.textContent = "Close"; b.addEventListener("click", () => { connTests.delete(id); renderRail(); }); box.appendChild(b);
+  }
+  return box;
+}
+
 function renderRail() {
   machinesEl.replaceChildren();
   for (const m of machines) {
@@ -85,8 +107,9 @@ function renderRail() {
     row.className = "machine-row";
     const tip = st ? `${st.state}${st.reason ? `: ${st.reason}` : ""}${st.retry_in_secs ? ` (retry in ${st.retry_in_secs}s)` : ""}` : "unknown";
     row.innerHTML = `<span class="dot ${st?.state ?? ""}" title="${esc(tip)}"></span><span class="label" title="${esc(m.ssh_target ?? "local")}">${esc(m.label)}</span>
-      <span class="acts"><button data-a="pair" title="Pair device">&#128279;</button><button data-a="re" title="Reconnect">&#8635;</button><button data-a="rm" title="Remove machine">&#10005;</button></span>`;
+      <span class="acts"><button data-a="pair" title="Pair device">&#128279;</button>${m.kind === "local" ? "" : '<button data-a="tc" title="Test connection">&#9889;</button>'}<button data-a="re" title="Reconnect">&#8635;</button><button data-a="rm" title="Remove machine">&#10005;</button></span>`;
     row.querySelector('[data-a="pair"]')!.addEventListener("click", () => openPair?.());
+    row.querySelector('[data-a="tc"]')?.addEventListener("click", () => runConnTest(m.id));
     row.querySelector('[data-a="re"]')!.addEventListener("click", () => fire(api.reconnectMachine(m.id)));
     row.querySelector('[data-a="rm"]')!.addEventListener("click", () => {
       fire(api.removeMachine(m.id));
@@ -95,6 +118,8 @@ function renderRail() {
       renderRail();
     });
     machinesEl.appendChild(row);
+    const ct = connTests.get(m.id);
+    if (ct) machinesEl.appendChild(connTestBox(m.id, ct));
     const fv = failureView(m, st);
     if (fv) machinesEl.appendChild(failureBox(m, st, fv));
     const sy = syncRows.find((r) => r.machine_id === m.id);

@@ -1,4 +1,4 @@
-import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, SyncStatus, MetaChanged, MetaReplica, SetSpaceMetaArgs, SpaceMeta, SurfaceEvent, SyncReport, Unlisten } from "./types";
+import type { Cell, KeyInput, Machine, MachineStatus, PaneSurface, Snapshot, SyncStatus, MetaChanged, MetaReplica, SetSpaceMetaArgs, SpaceMeta, SurfaceEvent, SyncReport, Unlisten, DiagReport } from "./types";
 
 // Thin wrapper over Tauri invoke/listen (INTERFACE.md). Outside Tauri (pnpm dev in a browser)
 // a mock backend emits fake machines/spaces/surfaces so the UI works without Rust.
@@ -10,6 +10,8 @@ export interface Api {
   /** Save the machine's Herdr session (empty = auto-discover); the core restarts it. */
   setMachineSession(machineId: string, session: string | null): Promise<Machine>;
   reconnectMachine(id: string): Promise<void>;
+  /** Read-only hop-by-hop check of an SSH machine; stops at the first failing hop. */
+  testConnection(id: string): Promise<DiagReport>;
   /** Start a local Herdr server (local machines only). */
   startLocalHerdr(id: string): Promise<void>;
   openSpace(machineId: string, workspaceId: string): Promise<void>;
@@ -54,6 +56,7 @@ async function createTauriApi(): Promise<Api> {
     removeMachine: (id) => invoke("remove_machine", { id }),
     setMachineSession: (machineId, session) => invoke("set_machine_session", { id: machineId, session }),
     reconnectMachine: (id) => invoke("reconnect_machine", { id }),
+    testConnection: (id) => invoke("test_connection", { id }),
     startLocalHerdr: () => invoke("start_local_herdr"),
     openSpace: (machineId, workspaceId) => invoke("open_space", { machineId, workspaceId }),
     selectTab: (machineId, tabId) => invoke("select_tab", { machineId, tabId }),
@@ -230,6 +233,18 @@ export function createMockApi(): Api {
     reconnectMachine: async (id) => {
       emitStatus({ machine_id: id, state: "connecting" });
       setTimeout(() => emitStatus({ machine_id: id, state: id === "dead" ? "failed" : "connected", reason: id === "dead" ? "ssh: timed out" : undefined, retry_in_secs: id === "dead" ? 30 : undefined }), 800);
+    },
+    testConnection: async (id) => {
+      await new Promise((r) => setTimeout(r, 600));
+      const steps: DiagReport["steps"] = [
+        { step: "tailscale", label: "Tailscale ping", status: "ok", detail: "pong from 100.64.0.2 in 12ms" },
+        id === "dead"
+          ? { step: "tcp", label: "TCP port 22", status: "fail", detail: "100.64.0.2:22: timed out after 5 s" }
+          : { step: "tcp", label: "TCP port 22", status: "ok", detail: "connected to 100.64.0.2:22" },
+      ];
+      if (id !== "dead") steps.push({ step: "ssh", label: "SSH login", status: "ok", detail: "logged in" }, { step: "bridge", label: "Herdr bridge", status: "ok", detail: "Herdr answered" });
+      if (id === "dead") steps.push({ step: "reverse", label: "Reverse: peer to this device, TCP 22", status: "skip", detail: "not testable from here. On the peer run: Mac `nc -vz 100.64.0.1 22`, Windows `Test-NetConnection 100.64.0.1 -Port 22`." });
+      return { steps, ok: id !== "dead", hint: id === "dead" ? "TCP 22 timed out although the Tailscale ping may work. If Shields Up is already off, suspect a Tailscale ACL / grant that does not allow tcp:22 between these two devices, or a relay-only path (ping says \"via DERP\"); then check the other device's firewall and Remote Login / sshd." : null };
     },
     startLocalHerdr: async () => {},
     openSpace: async (mid, wid) => {

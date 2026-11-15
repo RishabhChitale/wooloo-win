@@ -74,6 +74,8 @@ tailscale ping works but ssh times out (TCP 22 blocked while the Tailscale path 
   RULED OUT on this PC: Shields Up is false; rule wooloo-sshd-tailscale is
   Enabled/Allow/Any; sshd listens on 0.0.0.0:22 and ::. (Elsewhere: check with
   tailscale debug prefs | findstr /i ShieldsUp; fix tailscale set --shields-up=false.)
+  First click "Test connection" (lightning icon on the Mac machine row): it shows which hop fails and,
+  on a TCP 22 timeout, the reverse-direction command to run on the Mac.
   Decision tree (PowerShell, in order, stop at the first that fails):
   1. PC -> itself:  Test-NetConnection 100.104.240.58 -Port 22
      Fails -> sshd/local problem: Get-Service sshd; netstat -an | findstr ":22 "
@@ -124,6 +126,7 @@ PC (wooloo-win)
 | Start Herdr | src/main.ts:67 |
 | Copy diagnostics | src/main.ts:70 |
 | Reconnect (row button, arrow icon) | src/main.ts:88 |
+| Test connection (row button, lightning icon) | src/main.ts; docs/pair-ui-strings.txt |
 | 1. Show this PC's code / 2. Enter a code | docs/pair-ui-strings.txt |
 | Generate code, Review, Accept pairing, Close, Copy commands | docs/pair-ui-strings.txt |
 | this PC as the peer reaches it: user@100.x.y.z; wooloo-pair-v1:... | docs/pair-ui-strings.txt |

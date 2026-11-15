@@ -1,4 +1,5 @@
 //! Thin Tauri glue over wooloo-core. Commands and events follow INTERFACE.md.
+mod diag;
 mod pair;
 mod sync;
 use serde::Deserialize;
@@ -353,7 +354,8 @@ pub fn run() {
             list_machines, add_machine, remove_machine, set_machine_session, reconnect_machine, open_space, select_tab,
             focus_pane, send_key, send_paste, resize_viewport, scroll, start_local_herdr,
             pair::pair_defaults, pair::pair_local_info, pair::pair_review, pair::pair_accept,
-            sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status
+            sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status,
+            diag::test_connection
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
