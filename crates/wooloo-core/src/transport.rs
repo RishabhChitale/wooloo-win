@@ -212,10 +212,8 @@ impl SshTransport {
             Channel::Api => "remote-api-bridge",
             Channel::Client => "remote-client-bridge",
         };
-        let mut a: Vec<String> = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let mut a: Vec<String> = crate::meta::peer_conf_args(host);
+        a.extend(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"].iter().map(|s| s.to_string()));
         #[cfg(unix)]
         {
             // Windows OpenSSH has no connection reuse.

@@ -94,6 +94,25 @@ pub fn decide(entries: &[SessionEntry]) -> Decision {
     }
 }
 
+/// The session name to advertise in a pairing code: the one the running local Herdr really uses.
+/// Default session if running, else the only running named one, else (none running, or several and no
+/// default) "default". Never a made-up name.
+pub fn pairing_session(entries: &[SessionEntry]) -> String {
+    match decide(entries) {
+        Decision::Use(Some(n)) if crate::machines::valid_session(&n) => n,
+        Decision::Ambiguous(names) => names.into_iter().find(|n| crate::machines::valid_session(n)).unwrap_or_else(|| "default".into()),
+        _ => "default".into(),
+    }
+}
+
+/// Detects the live local session for pairing: `herdr session list --json`, else the pipe names.
+pub async fn detect_pairing_session() -> String {
+    match run_session_list().await {
+        Some(e) => pairing_session(&e),
+        None => pairing_session(&sessions_from_pipes(&list_herdr_pipes())),
+    }
+}
+
 /// Failure text for an ambiguous choice.
 pub fn ambiguous_reason(names: &[String]) -> (String, String) {
     let first = names.first().map(String::as_str).unwrap_or("main");
@@ -181,6 +200,20 @@ mod tests {
         assert_eq!(decide(&[e("default", true, false), e("a", false, false)]), Decision::Fallback);
         assert_eq!(decide(&[e("default", true, false), e("a", false, true), e("b", false, true)]), Decision::Ambiguous(vec!["a".into(), "b".into()]));
         assert_eq!(decide(&[]), Decision::Fallback);
+    }
+
+    #[test]
+    fn pairing_session_follows_the_live_server() {
+        // the reported bug: PC Herdr runs the default session, code must not say "wooloo"
+        assert_eq!(pairing_session(&[e("default", true, true)]), "default");
+        assert_eq!(pairing_session(&[e("default", true, false), e("wooloo", false, true)]), "wooloo");
+        assert_eq!(pairing_session(&[e("default", true, true), e("wooloo", false, true)]), "default");
+        assert_eq!(pairing_session(&[e("default", true, false), e("a", false, true), e("b", false, true)]), "a");
+        assert_eq!(pairing_session(&[]), "default");
+        assert_eq!(pairing_session(&[e("default", true, false)]), "default");
+        assert_eq!(pairing_session(&[e("bad name", false, true)]), "default");
+        let from_pipes = sessions_from_pipes(&[r"C:\Users\me\AppData\Roaming\herdr\herdr.sock".to_string()]);
+        assert_eq!(pairing_session(&from_pipes), "default");
     }
 
     #[test]

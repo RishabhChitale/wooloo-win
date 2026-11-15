@@ -330,7 +330,10 @@ pub fn run() {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("machines.toml");
-            let file = MachinesFile::load(&path).map_err(|e| e.to_string())?;
+            let mut file = MachinesFile::load(&path).map_err(|e| e.to_string())?;
+            if !file.dedupe_ssh().is_empty() {
+                let _ = file.save(&path); // merge duplicate rows of the same peer
+            }
             let (tx, mut rx) = unbounded_channel::<Event>();
             let state = App { path, file: Mutex::new(file.clone()), handles: Mutex::new(HashMap::new()), events: tx, sync: sync::SyncState::new(wooloo_core::meta::MetaStore::in_dir(&dir)) };
             // Handles are created inside the tauri async runtime.

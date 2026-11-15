@@ -361,7 +361,7 @@ new ResizeObserver(() => reportViewport()).observe(panesEl);
 
 $("add").addEventListener("click", () => dlg.showModal());
 let openPair: (() => void) | null = null;
-import("./pair").then((m) => { openPair = m.initPair(dlg, (m2) => { if (!machines.some((x) => x.id === m2.id)) machines.push(m2); renderRail(); }); });
+import("./pair").then((m) => { openPair = m.initPair(dlg, (m2, replaced) => { for (const id of replaced) { const i = machines.findIndex((x) => x.id === id); if (i >= 0 && id !== m2.id) machines.splice(i, 1); } if (!machines.some((x) => x.id === m2.id)) machines.push(m2); renderRail(); }); });
 $("pair").addEventListener("click", () => openPair?.());
 $("cancel").addEventListener("click", () => dlg.close());
 $<HTMLFormElement>("addform").addEventListener("submit", (e) => {

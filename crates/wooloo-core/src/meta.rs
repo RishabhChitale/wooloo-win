@@ -274,6 +274,7 @@ impl MetaStore {
             return Err(Error::Other("sync needs a paired machine (wooloo-peer-<id>)".into()));
         }
         let mut child = Command::new("ssh")
+            .args(peer_conf_args(host_alias))
             .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host_alias, SYNC_REQUEST])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -325,6 +326,24 @@ fn space_key(uuid: &str) -> String {
 }
 
 /// `wooloo-peer-<id>` with the id charset used by pairing.
+/// `<home>/.ssh/wooloo_peers/<id>.conf` for a `wooloo-peer-<id>` alias (None for any other host).
+pub fn peer_conf_path(home: &std::path::Path, alias: &str) -> Option<std::path::PathBuf> {
+    if !valid_alias(alias) {
+        return None;
+    }
+    Some(home.join(".ssh").join("wooloo_peers").join(format!("{}.conf", &alias["wooloo-peer-".len()..])))
+}
+
+/// ssh args `-F <peer conf>` that make a `wooloo-peer-<id>` alias resolve even when ~/.ssh/config has no
+/// Include line. Empty for other hosts or when the conf file does not exist (then ssh falls back to the user config).
+pub fn peer_conf_args(alias: &str) -> Vec<String> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from);
+    match home.and_then(|h| peer_conf_path(&h, alias)) {
+        Some(p) if p.is_file() => vec!["-F".into(), p.to_string_lossy().replace('\\', "/")],
+        _ => Vec::new(),
+    }
+}
+
 pub fn valid_alias(a: &str) -> bool {
     match a.strip_prefix("wooloo-peer-") {
         Some(id) => !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
@@ -334,6 +353,14 @@ pub fn valid_alias(a: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn peer_conf_path_only_for_aliases() {
+        let h = std::path::Path::new("/h");
+        assert_eq!(super::peer_conf_path(h, "wooloo-peer-ab-1").unwrap(), h.join(".ssh").join("wooloo_peers").join("ab-1.conf"));
+        assert!(super::peer_conf_path(h, "user@host").is_none());
+        assert!(super::peer_conf_path(h, "wooloo-peer-../x").is_none());
+    }
+
     use super::*;
     use std::collections::VecDeque;
     use std::io::Read;

@@ -386,7 +386,7 @@ pub fn host_key_error(tried: &[Attempt]) -> String {
 pub fn elevated_commands(path: &str, line: &str) -> String {
     let q = |s: &str| s.replace('\'', "''");
     format!(
-        "$p = '{}'\nNew-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null\nAdd-Content -Path $p -Value '{}' -Encoding ascii\nicacls $p /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'",
+        "# wooloo: let the paired device log in to this PC (run in PowerShell as Administrator)\n# Adds one restricted key line to the OpenSSH admin keys file (skipped if already there) and locks the file's permissions as sshd requires.\n$p = '{}'\n$line = '{}'\nNew-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null\nif (-not (Test-Path $p) -or -not (Select-String -Path $p -SimpleMatch -Quiet -Pattern $line)) {{ Add-Content -Path $p -Value $line -Encoding ascii }}\nicacls $p /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'",
         q(path),
         q(line)
     )
@@ -716,7 +716,10 @@ mod tests {
         let s = elevated_commands("C:\\ProgramData\\ssh\\administrators_authorized_keys", line);
         assert!(s.contains("$p = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'"));
         assert!(s.contains("it''s"));
-        assert!(s.contains("Add-Content -Path $p -Value '"));
+        assert!(s.contains("$line = 'command="));
+        assert!(s.contains("Add-Content -Path $p -Value $line"));
+        assert!(s.contains("run in PowerShell as Administrator"));
+        assert!(s.contains("Select-String"), "must be idempotent");
         assert!(s.contains("icacls $p /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'"));
     }
 

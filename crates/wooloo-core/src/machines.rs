@@ -114,6 +114,21 @@ impl MachinesFile {
         Ok(m)
     }
 
+    /// Drops later ssh machines that repeat an earlier one's ssh_target (same paired peer added twice).
+    /// Returns the removed ids.
+    pub fn dedupe_ssh(&mut self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut gone = Vec::new();
+        self.machines.retain(|m| match (&m.kind, &m.ssh_target) {
+            (MachineKind::Ssh, Some(t)) if !seen.insert(t.clone()) => {
+                gone.push(m.id.clone());
+                false
+            }
+            _ => true,
+        });
+        gone
+    }
+
     pub fn remove(&mut self, id: &str) -> bool {
         let n = self.machines.len();
         self.machines.retain(|m| m.id != id);
@@ -127,6 +142,19 @@ impl MachinesFile {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dedupe_ssh_keeps_first_per_target() {
+        let mut f = MachinesFile::default();
+        let a = f.add_ssh("Mac".into(), "wooloo-peer-abc".into(), None).unwrap();
+        let b = f.add_ssh("Mac".into(), "wooloo-peer-abc".into(), None).unwrap();
+        let c = f.add_ssh("Other".into(), "wooloo-peer-xyz".into(), None).unwrap();
+        let gone = f.dedupe_ssh();
+        assert_eq!(gone, vec![b.id.clone()]);
+        let ids: Vec<&str> = f.machines.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec![a.id.as_str(), c.id.as_str()]);
+        assert!(f.dedupe_ssh().is_empty());
+    }
+
     use super::*;
 
     #[test]

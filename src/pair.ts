@@ -5,7 +5,7 @@ import type { Machine } from "./types";
 interface Defaults { target: string; user: string; host: string; notes: string[] }
 interface LocalInfo { code: string; peer_id: string; public_fp: string; host_fp: string; herdr_path?: string | null }
 interface Review { label: string; target: string; session: string; herdr_version: string; peer_id: string; public_fp: string; host_fp: string; admin: boolean; authorized_keys_path: string; herdr_path?: string | null }
-interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; elevated_commands: string | null; elevation_reason: string | null; authorized_keys_path: string }
+interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; elevated_commands: string | null; elevation_reason: string | null; authorized_keys_path: string; replaced?: string[] }
 
 async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   const w = window as unknown as { __TAURI_INTERNALS__?: unknown };
@@ -16,7 +16,7 @@ async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => void): () => void {
+export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine, replaced: string[]) => void): () => void {
   const dlg = document.createElement("dialog");
   dlg.id = "pairdlg";
   dlg.innerHTML = `
@@ -30,7 +30,7 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
       <textarea id="pair-code" rows="3" placeholder="wooloo-pair-v1:..." style="width:100%"></textarea>
       <button id="pair-review" type="button">Review</button>
       <div id="pair-info" style="font-size:12px"></div>
-      <label id="pair-inc" style="display:none;font-size:12px"><input id="pair-incbox" type="checkbox"> Add an Include line to ~/.ssh/config so plain ssh also knows this peer</label>
+      <label id="pair-inc" style="display:none;font-size:12px"><input id="pair-incbox" type="checkbox" checked> Add an Include line to ~/.ssh/config so plain ssh also knows this peer</label>
       <div style="display:flex;gap:6px;justify-content:flex-end"><button id="pair-accept" type="button" disabled>Accept pairing</button><button id="pair-close" type="button">Close</button></div>
     </div>`;
   document.body.appendChild(dlg);
@@ -73,14 +73,18 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
     accept.disabled = true;
     try {
       const r = await call<Accepted>("pair_accept", { code: reviewed, include_ssh_config: q<HTMLInputElement>("pair-incbox").checked });
-      onAdded(r.machine);
+      onAdded(r.machine, r.replaced ?? []);
       info.innerHTML = r.needs_elevation
-        ? `Paired, but this PC's <code>${esc(r.authorized_keys_path)}</code> still needs the peer's key (${esc(r.elevation_reason ?? "needs an elevated write")}).<br>
-          The line to add:<br><textarea readonly rows="3" style="width:100%">${esc(r.needs_elevation)}</textarea>
-          Or paste this into PowerShell run as Administrator:<br><textarea id="pair-elev" readonly rows="6" style="width:100%">${esc(r.elevated_commands ?? "")}</textarea>
-          <button id="pair-copy" type="button">Copy commands</button>`
+        ? `<div style="border:1px solid #c80;border-radius:6px;padding:8px;display:grid;gap:6px">
+          <b>One more step: allow the other device to log in to this PC</b>
+          <div>Windows keeps administrator keys in <code>${esc(r.authorized_keys_path)}</code>, which only an elevated (Administrator) process can write (${esc(r.elevation_reason ?? "needs an elevated write")}).</div>
+          <ol style="margin:0;padding-left:18px"><li>Click <b>Copy commands</b>.</li><li>Open the Start menu, type PowerShell, right-click Windows PowerShell and choose <b>Run as administrator</b>.</li><li>Paste and press Enter.</li></ol>
+          <div>What it does: adds one key line, limited to Herdr bridge commands, to that file (skipped if already there) and sets the file permissions sshd requires. Nothing else changes.</div>
+          <textarea id="pair-elev" readonly rows="8" style="width:100%;font-family:monospace">${esc(r.elevated_commands ?? "")}</textarea>
+          <div><button id="pair-copy" type="button">Copy commands</button> <span id="pair-copied" style="color:#2a7"></span></div>
+        </div>`
         : `Paired with ${esc(r.machine.label)}.`;
-      info.querySelector("#pair-copy")?.addEventListener("click", () => { void navigator.clipboard?.writeText(r.elevated_commands ?? "").catch(() => {}); });
+      info.querySelector("#pair-copy")?.addEventListener("click", () => { void navigator.clipboard?.writeText(r.elevated_commands ?? "").then(() => { const c = info.querySelector("#pair-copied"); if (c) c.textContent = "Copied"; }).catch(() => { info.querySelector<HTMLTextAreaElement>("#pair-elev")?.select(); }); });
     } catch (e) { fail(info, e); }
   });
 

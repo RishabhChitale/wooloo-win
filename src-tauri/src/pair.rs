@@ -189,7 +189,10 @@ pub fn pair_local_info(app: AppHandle, target: String, session: Option<String>, 
         public_key: public_key.clone(),
         host_key: host_key.clone(),
         herdr_version: herdr_version()?,
-        session: session.filter(|x| !x.trim().is_empty()).unwrap_or_else(|| "wooloo".into()),
+        session: match session.filter(|x| !x.trim().is_empty()) {
+            Some(x) => x,
+            None => tauri::async_runtime::block_on(wooloo_core::discover::detect_pairing_session()), // the session the running Herdr really uses
+        },
         label: label.trim().to_string(),
     };
     Ok(LocalInfo {
@@ -255,6 +258,8 @@ pub struct Accepted {
     /// Why the write was skipped or failed (not elevated / the OS error), when `needs_elevation` is set.
     elevation_reason: Option<String>,
     authorized_keys_path: String,
+    /// Ids of earlier rows for this same peer that were replaced (the UI drops them).
+    replaced: Vec<String>,
 }
 
 enum KeysOutcome {
@@ -371,16 +376,24 @@ fn pair_accept_inner(app: &AppHandle, state: &State<App>, code: String, include_
 
     // 4. the machine in machines.toml (re-pairing replaces the old entry), started right away
     let host_alias = format!("wooloo-peer-{peer}");
-    let m = {
+    let (m, replaced) = {
         let mut f = state.file.lock().unwrap_or_else(|e| e.into_inner());
         let old: Vec<String> = f.machines.iter().filter(|m| m.ssh_target.as_deref() == Some(host_alias.as_str())).map(|m| m.id.clone()).collect();
-        for id in old {
-            f.remove(&id);
+        for id in &old {
+            f.remove(id);
         }
         let m = f.add_ssh(c.label.clone(), host_alias, Some(c.session.clone())).map_err(s)?;
         f.save(&state.path).map_err(|e| format!("cannot save {}: {e}", state.path.display()))?;
-        m
+        (m, old)
     };
+    {
+        let mut h = state.handles.lock().unwrap_or_else(|e| e.into_inner());
+        for id in &replaced {
+            if let Some(h) = h.remove(id) {
+                h.send(wooloo_core::manager::Command::Stop);
+            }
+        }
+    }
     state.start(&m);
-    Ok(Accepted { machine: m, peer_id: peer, needs_elevation, elevated_commands, elevation_reason, authorized_keys_path: ak.display().to_string() })
+    Ok(Accepted { replaced, machine: m, peer_id: peer, needs_elevation, elevated_commands, elevation_reason, authorized_keys_path: ak.display().to_string() })
 }

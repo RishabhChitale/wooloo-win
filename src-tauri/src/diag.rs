@@ -260,6 +260,7 @@ fn step_ssh(target: &str) -> DiagStep {
     let (host, port) = split_target(target);
     let alias = wooloo_core::meta::valid_alias(host);
     let mut c = proc("ssh");
+    c.args(wooloo_core::meta::peer_conf_args(host));
     c.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]);
     if let Some(p) = port {
         c.args(["-p", &p.to_string()]);
@@ -320,6 +321,7 @@ fn step_bridge(target: &str, session: Option<String>) -> DiagStep {
 fn resolve(target: &str) -> (String, u16) {
     let (h, p) = split_target(target);
     let mut c = proc("ssh");
+    c.args(wooloo_core::meta::peer_conf_args(h));
     c.arg("-G");
     if let Some(p) = p {
         c.args(["-p", &p.to_string()]);
