@@ -145,33 +145,80 @@ pub fn build_failure(local: bool, tried: &[String], err: &Error, diag: Option<&s
     Failure { reason, tried: tried.to_vec(), hint: None }
 }
 
-async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: UnboundedReceiver<Command>) {
-    let transport: Arc<dyn Transport> = match for_machine(&m) {
-        Ok(t) => t,
-        Err(e) => {
-            status(&events, &m.id, State::Failed, Some(e.to_string()), None);
-            return;
+/// Consecutive-failure counter behind the retry delays (1, 2, 4, 8, 16, 30, 30 ... seconds).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Backoff {
+    failures: u32,
+}
+
+impl Backoff {
+    /// Delay for the failure that just happened; the next call is one step longer.
+    pub fn next_wait(&mut self) -> u64 {
+        let w = backoff_secs(self.failures);
+        self.failures = self.failures.saturating_add(1);
+        w
+    }
+    /// Manual reload or a good connection: start again at 1 s.
+    pub fn reset(&mut self) {
+        self.failures = 0;
+    }
+}
+
+/// Transport for this attempt. A local machine with no explicit session (and no pipe override) looks up
+/// its own running Herdr sessions each time; `Err(Failure)` means the choice is ambiguous.
+async fn resolve_transport(m: &Machine) -> std::result::Result<Arc<dyn Transport>, Failure> {
+    use crate::machines::MachineKind;
+    let mut mm = m.clone();
+    // Herdr's "default" session is the unnamed root, never `sessions\default`.
+    if mm.kind == MachineKind::Local && mm.session.as_deref() == Some("default") {
+        mm.session = None;
+    }
+    if mm.kind == MachineKind::Local && mm.session.is_none() && mm.pipe_path.as_deref().map_or(true, str::is_empty) {
+        match crate::discover::discover().await {
+            crate::discover::Decision::Use(s) => mm.session = s,
+            crate::discover::Decision::Ambiguous(names) => {
+                let (reason, hint) = crate::discover::ambiguous_reason(&names);
+                return Err(Failure { reason, tried: Vec::new(), hint: Some(hint) });
+            }
+            crate::discover::Decision::Fallback => {}
         }
-    };
-    let mut failures = 0u32;
+    }
+    for_machine(&mm).map_err(|e| Failure { reason: e.to_string(), tried: Vec::new(), hint: None })
+}
+
+/// What a failed machine does while waiting to retry.
+enum Wait {
+    Retry,
+    Reconnect,
+    Stop,
+}
+
+async fn wait_to_retry(secs: u64, rx: &mut UnboundedReceiver<Command>, cfg: &mut ViewState) -> Wait {
+    let sleep = tokio::time::sleep(Duration::from_secs(secs));
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            _ = &mut sleep => return Wait::Retry,
+            c = rx.recv() => match c {
+                None | Some(Command::Stop) => return Wait::Stop,
+                Some(Command::Reconnect) => return Wait::Reconnect,
+                Some(Command::Resize { cols, rows }) => { cfg.cols = cols; cfg.rows = rows; }
+                Some(_) => {}
+            }
+        }
+    }
+}
+
+async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: UnboundedReceiver<Command>) {
+    let mut backoff = Backoff::default();
     let mut cfg = ViewState { cols: 120, rows: 40 };
     loop {
+        // Amber while trying: Connecting is sent before every attempt (first, timed retry, manual reload).
         status(&events, &m.id, State::Connecting, None, None);
-        let mut connected = false;
-        let res = session(&*transport, &m.id, &events, &mut rx, &mut cfg, &mut connected).await;
-        match res {
-            Ok(Exit::Stop) => return,
-            Ok(Exit::Reconnect) => {
-                failures = 0;
-                continue;
-            }
-            Err(e) => {
-                if connected {
-                    failures = 0;
-                }
-                let f = build_failure(transport.is_local(), &transport.endpoints(), &e, transport.diagnostics().as_deref());
-                let wait = backoff_secs(failures);
-                failures = failures.saturating_add(1);
+        let transport = match resolve_transport(&m).await {
+            Ok(t) => t,
+            Err(f) => {
+                let wait = backoff.next_wait();
                 let _ = events.send(Event::Status {
                     machine_id: m.id.clone(),
                     state: State::Failed,
@@ -180,18 +227,40 @@ async fn run_machine(m: Machine, events: UnboundedSender<Event>, mut rx: Unbound
                     tried: f.tried,
                     hint: f.hint,
                 });
-                let sleep = tokio::time::sleep(Duration::from_secs(wait));
-                tokio::pin!(sleep);
-                loop {
-                    tokio::select! {
-                        _ = &mut sleep => break,
-                        c = rx.recv() => match c {
-                            None | Some(Command::Stop) => return,
-                            Some(Command::Reconnect) => { failures = 0; break }
-                            Some(Command::Resize { cols, rows }) => { cfg.cols = cols; cfg.rows = rows; }
-                            Some(_) => {}
-                        }
-                    }
+                match wait_to_retry(wait, &mut rx, &mut cfg).await {
+                    Wait::Stop => return,
+                    Wait::Reconnect => backoff.reset(),
+                    Wait::Retry => {}
+                }
+                continue;
+            }
+        };
+        let mut connected = false;
+        let res = session(&*transport, &m.id, &events, &mut rx, &mut cfg, &mut connected).await;
+        match res {
+            Ok(Exit::Stop) => return,
+            Ok(Exit::Reconnect) => {
+                backoff.reset();
+                continue;
+            }
+            Err(e) => {
+                if connected {
+                    backoff.reset();
+                }
+                let f = build_failure(transport.is_local(), &transport.endpoints(), &e, transport.diagnostics().as_deref());
+                let wait = backoff.next_wait();
+                let _ = events.send(Event::Status {
+                    machine_id: m.id.clone(),
+                    state: State::Failed,
+                    reason: Some(f.reason),
+                    retry_in_secs: Some(wait),
+                    tried: f.tried,
+                    hint: f.hint,
+                });
+                match wait_to_retry(wait, &mut rx, &mut cfg).await {
+                    Wait::Stop => return,
+                    Wait::Reconnect => backoff.reset(),
+                    Wait::Retry => {}
                 }
             }
         }
@@ -476,5 +545,34 @@ mod tests {
         assert_eq!(f.reason, "ssh: connect to host mac port 22: Connection refused (ssh me@mac)");
         let g = build_failure(false, &t, &Error::Timeout("client connect"), None);
         assert_eq!(g.reason, "timeout: client connect (ssh me@mac)");
+    }
+    #[test]
+    fn backoff_reload_resets() {
+        let mut b = Backoff::default();
+        let v: Vec<u64> = (0..7).map(|_| b.next_wait()).collect();
+        assert_eq!(v, vec![1, 2, 4, 8, 16, 30, 30]);
+        b.reset();
+        assert_eq!(b.next_wait(), 1);
+        assert_eq!(b.next_wait(), 2);
+    }
+
+    #[tokio::test]
+    async fn wait_reload_returns_immediately_and_stop_stops() {
+        let (tx, mut rx) = unbounded_channel();
+        let mut cfg = ViewState { cols: 1, rows: 1 };
+        tx.send(Command::Resize { cols: 5, rows: 6 }).unwrap();
+        tx.send(Command::Reconnect).unwrap();
+        // A 1-hour wait must end at once on Reconnect (and still apply the earlier Resize).
+        assert!(matches!(wait_to_retry(3600, &mut rx, &mut cfg).await, Wait::Reconnect));
+        assert_eq!((cfg.cols, cfg.rows), (5, 6));
+        tx.send(Command::Stop).unwrap();
+        assert!(matches!(wait_to_retry(3600, &mut rx, &mut cfg).await, Wait::Stop));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wait_elapses_to_retry() {
+        let (_tx, mut rx) = unbounded_channel::<Command>();
+        let mut cfg = ViewState { cols: 1, rows: 1 };
+        assert!(matches!(wait_to_retry(4, &mut rx, &mut cfg).await, Wait::Retry));
     }
 }

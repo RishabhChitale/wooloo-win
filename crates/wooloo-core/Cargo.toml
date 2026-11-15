@@ -15,3 +15,6 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time"] }
 log = "0.4"
 wooloo-sync = { path = "../wooloo-sync" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "time", "sync"] }
