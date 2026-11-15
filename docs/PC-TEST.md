@@ -102,6 +102,23 @@ tailscale ping works but ssh times out (TCP 22 blocked while the Tailscale path 
   4. Tailscale ACLs (admin console > Access controls): must allow this device to reach
      the other on tcp:22 (tags, grants). Look at the ACL "Preview" for both machines.
   Paste every result into the FAILURE REPORT. UNVERIFIED results pending from the user.
+VPN/TUN routing conflict (suspected cause of the TCP 22 timeout on this PC):
+  Diagnosis seen on the PC: a TUN adapter (10.5.0.2) holds a 0.0.0.0/0 default route at
+  metric 0, same as Ethernet; and NordVPN's NordLynx adapter has 100.64.42.190, which is
+  INSIDE Tailscale's 100.64.0.0/10 CGNAT range. Result: the PC cannot reach its own
+  100.104.240.58:22 and Tailscale stays on DERP (relay).
+  Check which interface Windows picks for the peer:
+    Find-NetRoute -RemoteIPAddress 100.121.45.79 | Format-List InterfaceAlias,NextHop,RouteMetric
+    (InterfaceAlias should be Tailscale; if it is NordLynx or the TUN, that is the bug)
+    Get-NetIPAddress | Where-Object IPAddress -like "100.*" | Format-Table IPAddress,InterfaceAlias
+    route print            (look for competing 0.0.0.0/0 and 100.64.0.0/10 entries)
+    tailscale status       (peer shows "relay" / DERP instead of direct)
+  Fix: exclude 100.64.0.0/10 from VPN routing: NordVPN allowlist / split tunneling (add
+  the subnet 100.64.0.0/10 and the Tailscale app), and the TUN VPN's route exclusions
+  (exclude 100.64.0.0/10). Do not let a VPN own an address in 100.64.0.0/10.
+  Test: pause/disconnect BOTH VPNs, rerun Test-NetConnection 100.104.240.58 -Port 22 and
+  the Find-NetRoute line, then `tailscale ping` the Mac (expect "direct", not "via DERP").
+  The sshd checks above stay as they are. UNVERIFIED fix on the real PC.
 Never start herdr from an Administrator window (see the Administrator note above).
 
 ## Known risks
