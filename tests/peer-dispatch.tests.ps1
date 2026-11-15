@@ -13,6 +13,8 @@ Set-Content -Path $fake -Encoding ASCII -Value @(
     'echo ARGS:%*',
     'exit /b 0'
 )
+$fakeSync = Join-Path $tmp 'wooloo-sync.cmd'
+Set-Content -Path $fakeSync -Encoding ASCII -Value @('@echo off', 'echo SYNC:%*', 'exit /b 0')
 $fails = 0
 $al = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\docs\peer-allowlist.json') | ConvertFrom-Json
 $MARKER = $al.marker; $PREFIX = $al.markerPrefix
@@ -22,7 +24,7 @@ function Run([string]$req, [string]$peer = 'studio-mac', [string]$stdin = '') {
     $env:SSH_ORIGINAL_COMMAND = $req
     [IO.File]::WriteAllText($inFile, $stdin, (New-Object Text.UTF8Encoding $false))
     $o = Join-Path $tmp 'out.txt'; $e = Join-Path $tmp 'err.txt'
-    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', ('"' + $peer + '"'), '-Herdr', $fake) `
+    $p = Start-Process powershell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', ('"' + $peer + '"'), '-Herdr', $fake, '-Sync', $fakeSync) `
         -Wait -PassThru -NoNewWindow -RedirectStandardInput $inFile -RedirectStandardOutput $o -RedirectStandardError $e
     [pscustomobject]@{ Code = $p.ExitCode; Out = (Get-Content $o -Raw); Err = (Get-Content $e -Raw) }
 }
@@ -56,6 +58,7 @@ $expect = @{
     'wooloo-api' = 'ARGS:--session wooloo remote-api-bridge'
     'wooloo-client' = 'ARGS:--session wooloo remote-client-bridge'
     'wooloo-check' = 'herdr-api-bridge-v1'
+    'wooloo-sync' = 'SYNC:exchange'
     'herdr-path-probe' = 'herdr.cmd'
     'herdr-client-bridge' = 'ARGS:--session wooloo remote-client-bridge'
     'herdr-client-bridge-idle' = 'ARGS:--session wooloo remote-client-bridge --idle-timeout-v1'
@@ -95,6 +98,12 @@ Check 'discovery without api support: exit 2' (($r.Code -eq 2) -and ($r.Err -lik
 $r = Req $byName['herdr-cached-api']
 Check 'cached api stale: exit 78' (($r.Code -eq 78) -and ($r.Err -like '*herdr-machine-metadata-stale-v1*'))
 Remove-Item Env:FAKE_NOCHECK
+
+# wooloo-sync takes no arguments: near misses are refused
+Denied 'sync with argument' 'wooloo-peer sync x'
+Denied 'sync trailing space' 'wooloo-peer sync '
+Denied 'sync uppercase' 'wooloo-peer SYNC'
+Denied 'sync chained' 'wooloo-peer sync; id'
 
 # denied: injection and near misses of every transport
 Denied 'empty' ''
