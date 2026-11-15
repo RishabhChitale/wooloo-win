@@ -274,7 +274,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_machines, add_machine, remove_machine, reconnect_machine, open_space, select_tab,
             focus_pane, send_key, send_paste, resize_viewport, scroll, start_local_herdr,
-            pair::pair_local_info, pair::pair_review, pair::pair_accept,
+            pair::pair_defaults, pair::pair_local_info, pair::pair_review, pair::pair_accept,
             sync::set_space_meta, sync::get_meta, sync::sync_now, sync::sync_status
         ])
         .run(tauri::generate_context!())

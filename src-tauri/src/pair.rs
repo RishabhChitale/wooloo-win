@@ -105,16 +105,78 @@ pub struct LocalInfo {
     host_fp: String,
 }
 
+#[derive(Serialize)]
+pub struct Defaults {
+    /// `user@host` to prefill; the user may edit it. Empty parts are left out.
+    target: String,
+    user: String,
+    host: String,
+    /// What was found or what is missing / wrong, for the dialog to show.
+    notes: Vec<String>,
+}
+
+/// Runs `tailscale` from PATH, then from the default Windows install folder.
+fn tailscale(args: &[&str]) -> Option<String> {
+    run("tailscale", args).or_else(|| {
+        let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+        run(&Path::new(&pf).join("Tailscale").join("tailscale.exe").to_string_lossy(), args)
+    })
+}
+
+/// Prefill for the Pair dialog's target box: this PC's Tailscale IPv4 (else its MagicDNS name) and the login from `whoami`.
+#[tauri::command]
+pub fn pair_defaults() -> Defaults {
+    let mut notes = Vec::new();
+    let host = match tailscale(&["ip", "-4"]).and_then(|t| pairing::parse_tailscale_ip(&t)) {
+        Some(ip) => ip,
+        None => match tailscale(&["status", "--json"]).and_then(|t| pairing::parse_magicdns(&t)) {
+            Some(n) => {
+                notes.push(format!("No Tailscale IPv4 from `tailscale ip -4`; using the MagicDNS name {n}."));
+                n
+            }
+            None => {
+                notes.push("Could not read this PC's Tailscale address (`tailscale ip -4` and `tailscale status --json` failed). Is Tailscale installed and signed in? Type the host as user@100.x.y.z.".into());
+                String::new()
+            }
+        },
+    };
+    let user = match run("whoami", &[]) {
+        Some(t) => {
+            let u = pairing::login_from_whoami(&t);
+            match pairing::check_login(&u) {
+                Ok(()) => u,
+                Err(e) => {
+                    notes.push(e.to_string());
+                    String::new()
+                }
+            }
+        }
+        None => {
+            notes.push("Could not run `whoami` to find the Windows login; type it in the target box.".into());
+            String::new()
+        }
+    };
+    let target = match (user.is_empty(), host.is_empty()) {
+        (false, false) => format!("{user}@{host}"),
+        (false, true) => format!("{user}@"),
+        (true, false) => format!("@{host}"),
+        (true, true) => String::new(),
+    };
+    Defaults { target, user, host, notes }
+}
+
 /// Builds this device's pairing code to paste into the other device. `target` is `user@host[:port]` as the peer
 /// should reach this PC (its Tailscale name or 100.x address).
 #[tauri::command(rename_all = "snake_case")]
 pub fn pair_local_info(app: AppHandle, target: String, session: Option<String>, label: Option<String>) -> Res<LocalInfo> {
+    let target = target.trim().to_string();
+    pairing::check_target(&target, "the Target box (this PC as the peer reaches it)", false).map_err(s)?;
     let key_path = config_dir(&app)?.join(KEY_FILE);
     let public_key = pairing::ensure_device_key(&key_path).map_err(s)?; // errors name the path / ssh-keygen command
     let host_key = host_key()?;
     let label = label.filter(|l| !l.trim().is_empty()).or_else(|| std::env::var("COMPUTERNAME").ok()).unwrap_or_else(|| "Windows PC".into());
     let c = PairCode {
-        target: target.trim().to_string(),
+        target,
         public_key: public_key.clone(),
         host_key: host_key.clone(),
         herdr_version: herdr_version()?,

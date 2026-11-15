@@ -2,6 +2,7 @@
 // Self-contained: builds its own <dialog> and adds one button to the add-machine dialog.
 import type { Machine } from "./types";
 
+interface Defaults { target: string; user: string; host: string; notes: string[] }
 interface LocalInfo { code: string; peer_id: string; public_fp: string; host_fp: string }
 interface Review { label: string; target: string; session: string; herdr_version: string; peer_id: string; public_fp: string; host_fp: string; admin: boolean; authorized_keys_path: string }
 interface Accepted { machine: Machine; peer_id: string; needs_elevation: string | null; elevated_commands: string | null; elevation_reason: string | null; authorized_keys_path: string }
@@ -23,6 +24,7 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
       <h3 style="margin:0">Pair device</h3>
       <div><b>1. Show this PC's code</b></div>
       <div style="display:flex;gap:6px"><input id="pair-target" placeholder="this PC as the peer reaches it: user@100.x.y.z" style="flex:1"><button id="pair-make" type="button">Make code</button></div>
+      <div id="pair-notes" style="font-size:12px;color:#c80"></div>
       <div id="pair-local" style="font-size:12px"></div>
       <div><b>2. Paste the other device's code</b></div>
       <textarea id="pair-code" rows="3" placeholder="wooloo-pair-v1:..." style="width:100%"></textarea>
@@ -35,6 +37,15 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
   const q = <T extends HTMLElement>(id: string) => dlg.querySelector<T>("#" + id)!;
   const local = q("pair-local"), info = q("pair-info"), accept = q<HTMLButtonElement>("pair-accept");
   const fail = (el: HTMLElement, e: unknown) => { el.innerHTML = `<span style="color:#c33">${esc(String(e))}</span>`; };
+
+  const prefill = async () => {
+    try {
+      const d = await call<Defaults>("pair_defaults", {});
+      const box = q<HTMLInputElement>("pair-target");
+      if (!box.value) box.value = d.target;
+      q("pair-notes").innerHTML = d.notes.map((n) => esc(n)).join("<br>");
+    } catch (e) { q("pair-notes").textContent = String(e); }
+  };
 
   q("pair-make").addEventListener("click", async () => {
     try {
@@ -78,7 +89,7 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
   const btn = document.createElement("button");
   btn.type = "button";
   btn.textContent = "Pair device…";
-  btn.addEventListener("click", () => { addDlg.close(); dlg.showModal(); });
+  btn.addEventListener("click", () => { addDlg.close(); dlg.showModal(); void prefill(); });
   (addDlg.querySelector("form") ?? addDlg).appendChild(btn);
-  return () => { if (addDlg.open) addDlg.close(); dlg.showModal(); };
+  return () => { if (addDlg.open) addDlg.close(); dlg.showModal(); void prefill(); };
 }

@@ -72,16 +72,114 @@ pub fn valid_key(k: &str) -> bool {
         && &raw[4..4 + ty.len()] == ty.as_bytes()
 }
 
+const TARGET_ALLOWED: &str = "letters, digits and . _ @ : [ ] - (no spaces or backslashes; must not start with '-'; at most 255 characters)";
+
+fn target_char_ok(b: char) -> bool {
+    b.is_ascii_alphanumeric() || "._@:[]-".contains(b)
+}
+
+/// The distinct offending characters of `s`, shown readably (a space as "space", `\` as "backslash").
+fn offending(s: &str, ok: impl Fn(char) -> bool) -> String {
+    let mut seen: Vec<char> = Vec::new();
+    for c in s.chars().filter(|c| !ok(*c)) {
+        if !seen.contains(&c) {
+            seen.push(c);
+        }
+    }
+    seen.iter()
+        .map(|c| match c {
+            ' ' => "space".to_string(),
+            '\\' => "backslash".to_string(),
+            c if c.is_control() => format!("control character U+{:04X}", *c as u32),
+            c => format!("'{c}'"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// True if `t` looks like what the Mac app emits: `user@100.x.y.z` or `user@name.tailnet.ts.net`.
+pub fn looks_like_mac_target(t: &str) -> bool {
+    let Some((u, h)) = t.split_once('@') else { return false };
+    !u.is_empty()
+        && u.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        && !h.is_empty()
+        && h.chars().all(|c| c.is_ascii_alphanumeric() || ".-".contains(c))
+}
+
+/// Validates an ssh target `user@host[:port]` with an error that names the field, the offending characters,
+/// what is allowed and (for pasted codes) whether it looks like the Mac's format.
+pub fn check_target(t: &str, field: &str, pasted: bool) -> Result<()> {
+    let mac = if pasted {
+        if looks_like_mac_target(t) {
+            " The value looks like the Mac's format, so the code may have been edited or truncated; make a fresh code on the other device."
+        } else {
+            " The value does not look like the Mac's format (user@100.x.y.z or user@name.tailnet.ts.net); the other device may not have produced this code."
+        }
+    } else {
+        ""
+    };
+    let wrap = |m: String| -> Result<()> { Err(Error::Other(format!("{}{mac}", m))) };
+    if t.is_empty() {
+        return wrap(format!("{field}: target is empty. Expected user@host, using {TARGET_ALLOWED}."));
+    }
+    if t.len() > 255 {
+        return wrap(format!("{field}: target is {} characters long; at most 255 are allowed.", t.len()));
+    }
+    if t.starts_with('-') {
+        return wrap(format!("{field}: target \"{t}\" starts with '-', which ssh would read as an option. Allowed: {TARGET_ALLOWED}."));
+    }
+    if !t.chars().all(target_char_ok) {
+        let bad = offending(t, target_char_ok);
+        let (user, _) = t.split_once('@').unwrap_or((t, ""));
+        if !user.chars().all(target_char_ok) {
+            return wrap(format!(
+                "{field}: the user part \"{user}\" of target \"{t}\" has characters ssh targets cannot hold ({}). Allowed: {TARGET_ALLOWED}.",
+                offending(user, target_char_ok)
+            ));
+        }
+        return wrap(format!("{field}: target \"{t}\" has characters that are not allowed ({bad}). Allowed: {TARGET_ALLOWED}."));
+    }
+    split_target(t).map(|_| ()).or_else(|e| wrap(format!("{field}: target \"{t}\" is not valid ({e}). Expected user@host or user@host:port, host may be [ipv6].")))
+}
+
+/// Login part of `whoami` output: strips `PCNAME\` / `DOMAIN\`.
+pub fn login_from_whoami(whoami: &str) -> String {
+    let l = whoami.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    l.rsplit('\\').next().unwrap_or(l).trim().to_string()
+}
+
+/// Checks a Windows login for use as the user part of an ssh target.
+pub fn check_login(name: &str) -> Result<()> {
+    let ok = |c: char| c.is_ascii_alphanumeric() || "._-".contains(c);
+    if name.is_empty() || name.starts_with('-') || !name.chars().all(ok) {
+        let what = if name.is_empty() { "(empty)".to_string() } else { offending(name, ok) };
+        let what = if what.is_empty() { "a leading '-'".to_string() } else { what };
+        return Err(Error::Other(format!(
+            "Windows account name {name} has characters ssh targets cannot hold ({what}); use or create a local account without spaces, or type a different login"
+        )));
+    }
+    Ok(())
+}
+
+/// First IPv4 address (100.x for Tailscale) from `tailscale ip -4` output.
+pub fn parse_tailscale_ip(out: &str) -> Option<String> {
+    out.lines().map(str::trim).find(|l| {
+        let p: Vec<&str> = l.split('.').collect();
+        p.len() == 4 && p.iter().all(|x| !x.is_empty() && x.len() <= 3 && x.bytes().all(|b| b.is_ascii_digit()))
+    }).map(String::from)
+}
+
+/// MagicDNS name (no trailing dot) from `tailscale status --json` text: the `Self` node's `DNSName`.
+pub fn parse_magicdns(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let n = v.get("Self")?.get("DNSName")?.as_str()?.trim_end_matches('.');
+    (!n.is_empty()).then(|| n.to_string())
+}
+
 impl PairCode {
     pub fn validate(&self) -> Result<()> {
         let t = &self.target;
-        if t.is_empty()
-            || t.len() > 255
-            || t.starts_with('-')
-            || !t.bytes().all(|b| b.is_ascii_alphanumeric() || b"._@:[]-".contains(&b))
-        {
-            return bad("bad target");
-        }
+        check_target(t, "pasted code, field `target`", true)?;
         split_target(t)?;
         if !valid_key(&self.public_key) {
             return bad("bad publicKey");
@@ -447,6 +545,42 @@ mod tests {
         assert_eq!(split_target("me@host:2222").unwrap(), ("me".into(), "host".into(), 2222));
         assert_eq!(split_target("me@[fd7a::1]:2200").unwrap(), ("me".into(), "fd7a::1".into(), 2200));
         assert_eq!(split_target("me@[fd7a::1]").unwrap().2, 22);
+    }
+
+    #[test]
+    fn target_samples_and_messages() {
+        for ok in ["zomato@rishabhs-macbook-pro.tail7fd3ee.ts.net", "zomato@100.121.45.79", "me@[fd7a::1]:2200"] {
+            assert!(check_target(ok, "t", true).is_ok(), "{ok}");
+            let mut c = code();
+            c.target = ok.into();
+            assert!(c.validate().is_ok(), "{ok}");
+        }
+        let e = check_target("Rishabh Chitale@100.1.2.3", "the Target box", false).unwrap_err().to_string();
+        assert!(e.contains("the Target box") && e.contains("space") && e.contains("Allowed"), "{e}");
+        let e = check_target("PC\\user@100.1.2.3", "f", true).unwrap_err().to_string();
+        assert!(e.contains("backslash") && e.contains("Mac's format"), "{e}");
+        assert!(check_target("user name@host", "f", true).unwrap_err().to_string().contains("space"));
+        let e = check_target("-oProxyCommand=x@h", "f", true).unwrap_err().to_string();
+        assert!(e.contains("starts with '-'"), "{e}");
+        assert!(check_target("", "f", false).unwrap_err().to_string().contains("empty"));
+        assert!(check_target("me", "f", false).unwrap_err().to_string().contains("user@host"));
+        assert!(!looks_like_mac_target("PC\\user@h"));
+        assert!(looks_like_mac_target("zomato@100.121.45.79"));
+    }
+
+    #[test]
+    fn windows_login_and_tailscale_parsing() {
+        assert_eq!(login_from_whoami("pc-name\\rishabh\r\n"), "rishabh");
+        assert_eq!(login_from_whoami("DOMAIN\\Rishabh Chitale"), "Rishabh Chitale");
+        assert_eq!(login_from_whoami("plain"), "plain");
+        assert!(check_login("rishabh").is_ok());
+        let e = check_login("Rishabh Chitale").unwrap_err().to_string();
+        assert_eq!(e, "Windows account name Rishabh Chitale has characters ssh targets cannot hold (space); use or create a local account without spaces, or type a different login");
+        assert!(check_login("a\\b").unwrap_err().to_string().contains("backslash"));
+        assert_eq!(parse_tailscale_ip("100.101.102.103\r\nfd7a::1\n").as_deref(), Some("100.101.102.103"));
+        assert_eq!(parse_tailscale_ip("not running"), None);
+        assert_eq!(parse_magicdns(r#"{"Self":{"DNSName":"pc.tail7fd3ee.ts.net."}}"#).as_deref(), Some("pc.tail7fd3ee.ts.net"));
+        assert_eq!(parse_magicdns("garbage"), None);
     }
 
     #[test]
