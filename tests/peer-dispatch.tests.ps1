@@ -166,6 +166,9 @@ function StartSync([string]$syncExe) {
     $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $disp + '" -Peer "studio-mac" -Herdr "' + $fake + '" -Sync "' + $syncExe + '"'
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    # No BOM: a UTF-8 preamble from the child's stdin StreamWriter would add 3 bytes to the first line (seen in CI at
+    # the cap boundary). Not every runtime has the property, so ignore a failure to set it.
+    try { $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false) } catch {}
     [Diagnostics.Process]::Start($psi)
 }
 # lines are delivered one at a time while stdin stays open

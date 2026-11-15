@@ -98,7 +98,7 @@ function Run-Sync([string]$exe) {
     }
     if ($over) {
         [Console]::Error.WriteLine('wooloo-peer-bridge: sync input over the size limit')
-        [Console]::Error.WriteLine("wooloo-peer-bridge: diag $diag")   # TEMP diagnostic
+        if ($env:WOOLOO_PEER_DIAG -eq '1') { [Console]::Error.WriteLine("wooloo-peer-bridge: diag $diag") }   # off by default
         try { $childIn.Close() } catch {}
         if (-not $p.WaitForExit(2000)) { try { $p.Kill() } catch {} }
         try { $outTask.Wait(2000) | Out-Null } catch {}

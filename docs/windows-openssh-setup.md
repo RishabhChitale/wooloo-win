@@ -71,6 +71,12 @@ limit` on stderr and exit 65. Caps apply to complete lines; lines already forwar
 ping-pong over one open stream, so each line is forwarded and flushed immediately (never buffered to EOF), and the output
 is forwarded as produced. Input is only bytes on a pipe; it is never parsed or evaluated.
 
+The cap counts raw bytes exactly as the Mac awk does (line length without its LF; no BOM or CR handling). Real clients
+(ssh) send raw bytes, so no BOM can be added on a real path. The test harness once injected a 3-byte UTF-8 BOM through
+`Process.StandardInput` (CI diag: `line=983043` after one 65536-byte chunk), which pushed an at-cap line over; it now
+starts the child with a no-BOM `StandardInputEncoding`. Setting `WOOLOO_PEER_DIAG=1` adds a second stderr line with the
+byte counts when a cap trips (off by default; the first line stays identical to the Mac message).
+
 Intentionally absent on Windows: the Mac dispatcher's presence files (`~/.local/state/wooloo/peer-presence/<id>.<pid>`
 for bridge requests) and ready-marker framing for sync. The sync request is not marker-framed, and the Windows app does
 not scan for presence yet; add both together if a Windows presence view is wanted.
