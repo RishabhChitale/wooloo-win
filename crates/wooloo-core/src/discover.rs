@@ -105,7 +105,8 @@ pub fn ambiguous_reason(names: &[String]) -> (String, String) {
 
 /// `herdr session list --json` with no console window; None if herdr is missing, slow or fails.
 pub async fn run_session_list() -> Option<Vec<SessionEntry>> {
-    let mut c = tokio::process::Command::new("herdr");
+    let prog = tokio::task::spawn_blocking(crate::resolve::herdr_program).await.ok()?;
+    let mut c = tokio::process::Command::new(prog);
     c.args(["session", "list", "--json"]).stdin(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]
     {
