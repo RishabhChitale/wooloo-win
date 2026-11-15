@@ -1,6 +1,6 @@
 //! Tauri glue for Space metadata sync (wooloo_core::meta). Blocking work runs on spawn_blocking.
 use crate::{s, App, Res};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -8,12 +8,30 @@ use tauri::{AppHandle, Emitter, State};
 use wooloo_core::machines::MachineKind;
 use wooloo_core::meta::{valid_alias, MetaStore, SetMeta, SyncReport};
 
-/// Last sync result per machine, for `sync_status`.
-#[derive(Clone, Debug, Default, Serialize)]
+/// Last sync result per machine (internal; the frontend sees [`SyncStatus`]).
+#[derive(Clone, Debug, Default)]
 pub struct MachineSync {
     pub machine_id: String,
     pub syncing: bool,
     pub last_ok_ms: Option<u64>,
+    pub last_error: Option<String>,
+    pub last_report: Option<SyncReport>,
+}
+
+/// What `sync_status()` returns and the `sync-status` event carries.
+#[derive(Clone, Debug, Serialize)]
+pub struct SyncStatus {
+    pub machine_id: String,
+    pub peer_label: String,
+    /// "connecting" | "ok" | "offline" | "skew"
+    pub state: &'static str,
+    /// Epoch milliseconds UTC of the last successful round; null = never.
+    pub last_ok_ms: Option<u64>,
+    /// Local ops the peer has not acked yet.
+    pub pending: u64,
+    pub local_herdr_version: Option<String>,
+    pub peer_herdr_version: Option<String>,
+    pub syncing: bool,
     pub last_error: Option<String>,
     pub last_report: Option<SyncReport>,
 }
@@ -38,45 +56,108 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Res<T> + Send + 'static
     tauri::async_runtime::spawn_blocking(f).await.map_err(s)?
 }
 
-#[derive(Deserialize)]
-pub struct SetSpaceMeta {
-    pub uuid: Option<String>,
-    pub herdr_id: Option<String>,
-    pub host: Option<String>,
-    #[serde(default)]
-    pub fields: Map<String, Value>,
-}
-
-/// Edit a Space's metadata locally. Returns the Space uuid. Emits `meta-changed` with this machine's node id.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn set_space_meta(app: AppHandle, st: State<'_, App>, req: SetSpaceMeta) -> Res<String> {
+/// Edit a Space's metadata. Args (camelCase, one flat object): `{machineId, herdrId, fields, uuid?}`.
+/// `machineId` picks the machine that owns the Herdr server; the stored host is that machine's node id.
+/// Returns the full merged Space record (with per-field hlc). Emits `meta-changed` (source "local").
+#[tauri::command]
+pub async fn set_space_meta(
+    app: AppHandle,
+    st: State<'_, App>,
+    machine_id: String,
+    herdr_id: Option<String>,
+    fields: Option<Map<String, Value>>,
+    uuid: Option<String>,
+) -> Res<Value> {
+    let local = {
+        let f = st.file.lock().unwrap();
+        match f.get(&machine_id) {
+            Some(m) => matches!(m.kind, MachineKind::Local),
+            None => return Err(format!("unknown machine {machine_id}")),
+        }
+    };
     let store = st.sync.store.clone();
-    let (uuid, node) = blocking(move || {
-        let uuid = store
-            .set_space_meta(SetMeta { uuid: req.uuid, herdr_id: req.herdr_id, host: req.host, fields: req.fields })
+    let (rec, node) = blocking(move || {
+        let host = if local {
+            None
+        } else {
+            Some(store.peer_node(&machine_id).ok_or_else(|| format!("{machine_id} has not synced yet; sync first"))?)
+        };
+        let rec = store
+            .set_space_meta(SetMeta { uuid, herdr_id, host, fields: fields.unwrap_or_default() })
             .map_err(s)?;
-        Ok((uuid, store.node().map_err(s)?))
+        Ok((rec, store.node().map_err(s)?))
     })
     .await?;
     emit_changed(&app, &node, "local");
-    Ok(uuid)
+    Ok(rec)
 }
 
-/// `{node, spaces:[{uuid, host, herdr_id, name, category, color, order, notes, pinned_tabs}]}`.
+/// `{node, spaces:[Space]}` incl. tombstones (`deleted: true`), see INTERFACE.md.
 #[tauri::command]
 pub async fn get_meta(st: State<'_, App>) -> Res<Value> {
     let store = st.sync.store.clone();
     blocking(move || store.get_meta().map_err(s)).await
 }
 
-/// Sync with one paired machine now. Returns that machine's status record.
+fn state_of(m: &MachineSync) -> &'static str {
+    if m.syncing {
+        "connecting"
+    } else if m.last_error.is_some() {
+        "offline"
+    } else if m.last_report.as_ref().is_some_and(|r| r.skewed > 0) {
+        "skew"
+    } else if m.last_ok_ms.is_some() {
+        "ok"
+    } else {
+        "offline"
+    }
+}
+
+/// Build one machine's status (reads the pending count from disk, so call from a blocking context).
+fn build_status(sync: &SyncState, machine_id: &str, label: &str) -> SyncStatus {
+    let m = sync.status.lock().unwrap().get(machine_id).cloned().unwrap_or_default();
+    SyncStatus {
+        machine_id: machine_id.to_owned(),
+        peer_label: label.to_owned(),
+        state: state_of(&m),
+        last_ok_ms: m.last_ok_ms,
+        pending: sync.store.pending(machine_id).unwrap_or(0),
+        // Herdr versions are not carried by the sync hello (a wire change, see INTERFACE.md): unknown.
+        local_herdr_version: None,
+        peer_herdr_version: None,
+        syncing: m.syncing,
+        last_error: m.last_error,
+        last_report: m.last_report,
+    }
+}
+
+async fn status_of(app: &AppHandle, sync: &SyncState, machine_id: &str, label: &str) -> SyncStatus {
+    let (sy, id, lb) = (sync.clone(), machine_id.to_owned(), label.to_owned());
+    let st = blocking(move || Ok(build_status(&sy, &id, &lb))).await.unwrap_or_else(|_| SyncStatus {
+        machine_id: machine_id.to_owned(),
+        peer_label: label.to_owned(),
+        state: "offline",
+        last_ok_ms: None,
+        pending: 0,
+        local_herdr_version: None,
+        peer_herdr_version: None,
+        syncing: false,
+        last_error: None,
+        last_report: None,
+    });
+    let _ = app.emit("sync-status", &st);
+    st
+}
+
+/// Sync with one paired machine now. Returns that machine's status. Emits `sync-status` when the
+/// state changes (connecting, then ok/offline/skew) and `meta-changed` when data arrived.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) -> Res<MachineSync> {
-    let alias = {
+pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) -> Res<SyncStatus> {
+    let (alias, label) = {
         let f = st.file.lock().unwrap();
         match f.get(&machine_id) {
             Some(m) => match (&m.kind, m.ssh_target.as_deref()) {
-                (MachineKind::Ssh, Some(t)) if valid_alias(t) => t.to_owned(),
+                (MachineKind::Ssh, Some(t)) if valid_alias(t) => (t.to_owned(), m.label.clone()),
                 _ => return Err("sync needs a paired machine".into()),
             },
             None => return Err(format!("unknown machine {machine_id}")),
@@ -91,9 +172,16 @@ pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) ->
         }
         e.syncing = true;
     }
+    status_of(&app, &sync, &machine_id, &label).await; // connecting
     let store = sync.store.clone();
-    let res = blocking(move || store.sync_ssh(&alias).map_err(s)).await;
-    let out = {
+    let mid = machine_id.clone();
+    let res = blocking(move || {
+        let r = store.sync_ssh(&alias).map_err(s)?;
+        store.note_synced(&mid, &r).map_err(s)?;
+        Ok(r)
+    })
+    .await;
+    {
         let mut g = sync.status.lock().unwrap();
         let e = g.entry(machine_id.clone()).or_default();
         e.machine_id = machine_id.clone();
@@ -106,18 +194,23 @@ pub async fn sync_now(app: AppHandle, st: State<'_, App>, machine_id: String) ->
             }
             Err(m) => e.last_error = Some(m.clone()),
         }
-        e.clone()
-    };
+    }
     if matches!(&res, Ok(r) if r.changed()) {
         emit_changed(&app, &machine_id, "sync");
     }
+    let out = status_of(&app, &sync, &machine_id, &label).await;
     res.map(|_| out)
 }
 
-/// Status of every machine that has been synced this run.
+/// Status of every paired (ssh) machine; `state` is "offline" until its first successful round.
 #[tauri::command]
-pub fn sync_status(st: State<'_, App>) -> Vec<MachineSync> {
-    let mut v: Vec<MachineSync> = st.sync.status.lock().unwrap().values().cloned().collect();
+pub async fn sync_status(st: State<'_, App>) -> Res<Vec<SyncStatus>> {
+    let machines: Vec<(String, String)> = {
+        let f = st.file.lock().unwrap();
+        f.machines.iter().filter(|m| matches!(m.kind, MachineKind::Ssh)).map(|m| (m.id.clone(), m.label.clone())).collect()
+    };
+    let sync = st.sync.clone();
+    let mut v = blocking(move || Ok(machines.iter().map(|(i, l)| build_status(&sync, i, l)).collect::<Vec<_>>())).await?;
     v.sort_by(|a, b| a.machine_id.cmp(&b.machine_id));
-    v
+    Ok(v)
 }
