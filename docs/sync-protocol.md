@@ -216,17 +216,23 @@ not inside the Herdr config dir, so Herdr never reads or rewrites it.
 
 The app (or the `wooloo-sync` CLI around an exchange) does:
 
-1. **import**: read the local unit-state file. If it is missing or unreadable,
-   do nothing. Otherwise diff it against `unitcat_snapshot`: entries added or
-   changed become `category` ops, entries removed become `null` ops. Then set
-   the snapshot to the file. Entries that would not be valid ops (name not text
-   1-200, value not text 1-64) are skipped on both sides of the diff. (A machine
-   without unit scripts therefore never deletes the other machine's entries.)
+1. **import**: read the local unit-state file. If it is missing, unreadable or
+   not a JSON object, do nothing. Otherwise drop the entries that would not be
+   valid ops (name not text 1-200, value not text 1-64); call the rest the
+   file's *valid entries*. Diff the valid entries against `unitcat_snapshot`:
+   entries added or changed become `category` ops, entries removed become
+   `null` ops. Then set the snapshot to the valid entries (never to the raw
+   file), so an invalid entry is never diffed again. (A machine without unit
+   scripts therefore never deletes the other machine's entries.)
 2. **exchange** with the peer.
 3. **export**: build the map of all `unitcat:*` registers with non-null
-   values. If it differs from the file, write the file (temp + rename, sorted
-   keys, one-space indent like `unit-space-purpose.sh`) and set the snapshot to
-   it. If the file's directory does not exist, skip the write.
+   values. If the file's directory does not exist, or the file exists but is
+   unreadable or not a JSON object, do nothing (snapshot unchanged). If the
+   map differs from the file's valid entries, or the file is missing and the
+   map is not empty, write the map to the file (temp + rename, sorted keys,
+   one-space indent like `unit-space-purpose.sh`). Then set the snapshot to
+   the map. When nothing is written, invalid entries already in the file stay
+   there untouched.
 
 The responder does the same import before applying the received ops and the
 same export after, so both machines' unit files take part.

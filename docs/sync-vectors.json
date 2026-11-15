@@ -2452,6 +2452,422 @@
      "node": "mac-3f9a21c0"
     }
    ]
+  },
+  {
+   "name": "invalid initiator ops are rejected and not stored",
+   "now": 1763112001000,
+   "initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "color",
+     "value": "red",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:0a6b8c3d-1e2f-4a5b-8c7d-9e0f1a2b3c4d",
+     "field": "name",
+     "value": "",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 1
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "ok",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "responder": [],
+   "expect_reply": [],
+   "expect_accepted": 1,
+   "expect_rejected": 2,
+   "expect_initiator": [
+    {
+     "key": "space:0a6b8c3d-1e2f-4a5b-8c7d-9e0f1a2b3c4d",
+     "field": "name",
+     "value": "",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 1
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "color",
+     "value": "red",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "ok",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "expect_responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "ok",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "win-07be55d1"
+    }
+   ]
+  },
+  {
+   "name": "delete newer than a rename propagates",
+   "now": 1763112001000,
+   "initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "deleted",
+     "value": true,
+     "hlc": {
+      "wall": 1763112000010,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "renamed",
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_reply": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "renamed",
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_accepted": 1,
+   "expect_rejected": 0,
+   "expect_initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "deleted",
+     "value": true,
+     "hlc": {
+      "wall": 1763112000010,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "renamed",
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "deleted",
+     "value": true,
+     "hlc": {
+      "wall": 1763112000010,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "renamed",
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ]
+  },
+  {
+   "name": "same hlc: bigger node id wins",
+   "now": 1763112001000,
+   "initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "W",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "M",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_reply": [],
+   "expect_accepted": 1,
+   "expect_rejected": 0,
+   "expect_initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "W",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "expect_responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "W",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ]
+  },
+  {
+   "name": "same hlc and node: bigger canonical value wins",
+   "now": 1763112001000,
+   "initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "b",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "order",
+     "value": 2,
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "a",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "order",
+     "value": 10,
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_reply": [],
+   "expect_accepted": 2,
+   "expect_rejected": 0,
+   "expect_initiator": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "b",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "order",
+     "value": 2,
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_responder": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "b",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "order",
+     "value": 2,
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ]
+  },
+  {
+   "name": "unit category removal propagates",
+   "now": 1763112001000,
+   "initiator": [
+    {
+     "key": "unitcat:study central",
+     "field": "category",
+     "value": null,
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "responder": [
+    {
+     "key": "unitcat:study central",
+     "field": "category",
+     "value": "school",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "unitcat:finance explorer",
+     "field": "category",
+     "value": "finance",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_reply": [
+    {
+     "key": "unitcat:finance explorer",
+     "field": "category",
+     "value": "finance",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "expect_accepted": 1,
+   "expect_rejected": 0,
+   "expect_initiator": [
+    {
+     "key": "unitcat:finance explorer",
+     "field": "category",
+     "value": "finance",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "unitcat:study central",
+     "field": "category",
+     "value": null,
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ],
+   "expect_responder": [
+    {
+     "key": "unitcat:finance explorer",
+     "field": "category",
+     "value": "finance",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "unitcat:study central",
+     "field": "category",
+     "value": null,
+     "hlc": {
+      "wall": 1763112000005,
+      "counter": 0
+     },
+     "node": "win-07be55d1"
+    }
+   ]
   }
  ],
  "binding": [
@@ -2888,6 +3304,191 @@
     {
      "herdr_id": "w2",
      "label": "Two",
+     "kind": "minted",
+     "space": null
+    }
+   ],
+   "expect_orphans": []
+  },
+  {
+   "name": "name match is exact and case-sensitive",
+   "node": "mac-3f9a21c0",
+   "registers": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "host",
+     "value": "mac-3f9a21c0",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "herdr_id",
+     "value": "w1",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 1
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "Alpha",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "workspaces": [
+    {
+     "herdr_id": "w2",
+     "label": "alpha"
+    },
+    {
+     "herdr_id": "w3",
+     "label": "Alpha "
+    }
+   ],
+   "expect": [
+    {
+     "herdr_id": "w2",
+     "label": "alpha",
+     "kind": "minted",
+     "space": null
+    },
+    {
+     "herdr_id": "w3",
+     "label": "Alpha ",
+     "kind": "minted",
+     "space": null
+    }
+   ],
+   "expect_orphans": [
+    "6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11"
+   ]
+  },
+  {
+   "name": "two workspaces with the same label: the first rebinds",
+   "node": "mac-3f9a21c0",
+   "registers": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "host",
+     "value": "mac-3f9a21c0",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "herdr_id",
+     "value": "w1",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 1
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "Dup",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "workspaces": [
+    {
+     "herdr_id": "w5",
+     "label": "Dup"
+    },
+    {
+     "herdr_id": "w6",
+     "label": "Dup"
+    }
+   ],
+   "expect": [
+    {
+     "herdr_id": "w5",
+     "label": "Dup",
+     "kind": "rebound",
+     "space": "6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11"
+    },
+    {
+     "herdr_id": "w6",
+     "label": "Dup",
+     "kind": "minted",
+     "space": null
+    }
+   ],
+   "expect_orphans": []
+  },
+  {
+   "name": "a deleted Space is not bound even when its herdr_id matches",
+   "node": "mac-3f9a21c0",
+   "registers": [
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "host",
+     "value": "mac-3f9a21c0",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "herdr_id",
+     "value": "w1",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 1
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "name",
+     "value": "Alpha",
+     "hlc": {
+      "wall": 1763112000000,
+      "counter": 2
+     },
+     "node": "mac-3f9a21c0"
+    },
+    {
+     "key": "space:6f1c7a52-3b0e-4d8e-9a51-2a8f1c0d9e11",
+     "field": "deleted",
+     "value": true,
+     "hlc": {
+      "wall": 1763112000001,
+      "counter": 0
+     },
+     "node": "mac-3f9a21c0"
+    }
+   ],
+   "workspaces": [
+    {
+     "herdr_id": "w1",
+     "label": "Alpha"
+    }
+   ],
+   "expect": [
+    {
+     "herdr_id": "w1",
+     "label": "Alpha",
      "kind": "minted",
      "space": null
     }
