@@ -7,20 +7,25 @@ Goal: Mac wooloo (Swift fork) and Windows wooloo-win (Tauri) are peers: each run
 - M3 Windows half: pairing (wooloo-pair-v1), PowerShell forced-command dispatcher with the shared exact allow-list, drift check, OpenSSH setup doc, PC-TEST.md.
 - M4 Rust: wooloo-sync crate + spec + vectors (CI `vectors` job green), CLI edit + sync --loopback, metadata sync in Tauri (meta.rs, set_space_meta/get_meta/sync_now/sync_status), synced-context UI, e2e workflow, Windows installer artifact on every main push.
 
+## Done since last update
+- Windows dispatcher caps (1 MiB/line, 32 MiB total, exit 65) green on Windows PowerShell 5.1 (the sshd default shell); the cap-boundary red was a test-harness BOM, not the dispatcher. pwsh 7 leg best-effort.
+- Allow-list: revision 2, 20 entries, provisional:false, identical on Mac and Windows; drift check in CI.
+- Mac: PR #1 (pairing + exact-match dispatcher + wooloo-peer sync) merged, 0.3.17.6 released and installed. PR #2 (space-free stable Herdr symlink for the bridge) merged.
+- wooloo-win: sync hello carries herdr_version; skew banner live; e2e proves create/see/type/rename/partition/heal/converge (CI run 43664511661).
+
 ## In flight
-- probopass (1): contract decisions in INTERFACE.md (node-id host, set_space_meta object arg, presence, sync-status event, pending/versions, tombstones).
-- shelmet (3): conform src to INTERFACE.md (CI contract test currently red until then), then Swift sync port (queued).
-- slowpoke (7): e2e script on CLI edit + loopback.
-- klang (6): wire-format vectors section.
-- togekiss (11): Mac PR #1 (RishabhChitale/wooloo peer-pairing): exact-match allow-list dispatcher + 'wooloo-peer sync' entry (rev 2) + tests; then CI green.
-- bellsprout (4): extends verify_vectors.py to exchange/binding when klang finishes.
+- togekiss (11): release 0.3.17.7 (includes PR #2), install, Pair Device sheet check with a fake code.
+- slowpoke (7): M6 Mac lists and opens the PC's Spaces (branch peer-machines).
+- shelmet (3): Swift sync port (branch sync-swift) passing docs/sync-vectors.json in XCTest.
+- probopass (1): pwsh 7 leg / CI cleanups.
 
 ## Blocked / waiting
-- Opus pawns (drilbur, ditto) hit their usage limit; work moved to sonnet pawns.
-- Commander session hit its limit; hold the final real-PC test until it returns.
-- Mac PR #1: NOT merged, no tag, nothing installed. Order after green: merge, bump to 0.3.17.6, wait main CI green (no re-run), tag, install (backup first), smoke test Pair Device with a throwaway session.
-- Allow-list `provisional` flag: flip to false on both lists together (Mac JSON first, then Windows).
-- M6: Mac app lists the PC's Spaces and applies synced metadata (after the release).
+- Opus pawns (drilbur, ditto, klang) hit their usage limit earlier; sonnet pawns continue.
+- The real-PC test (docs/PC-TEST.md) waits for the user at the PC.
+- Mac metadata sync UI (names/categories/colours) waits for the Swift sync port, then a follow-up on top of M6.
+
+## Next
+1. M6 PR green and released; 2. Swift sync port PR green; 3. wire sync into the Mac app over the 'wooloo-peer sync' request; 4. real-PC test with the user.
 
 ## UNVERIFIED on real hardware
-Windows ConPTY and ssh.exe bridge, named pipe names, Windows_NT answer to Herdr's machine-add probe, administrators_authorized_keys ACLs, sshd restrict behaviour, canvas rendering/IME, Tailscale ACLs, the Swift side (never built).
+Windows ConPTY and ssh.exe bridge, named pipe names, Windows_NT answer to Herdr's machine-add probe, administrators_authorized_keys ACLs, sshd restrict behaviour, canvas rendering/IME, Tailscale ACLs, Swift side live pairing (only CI/XCTest so far).
