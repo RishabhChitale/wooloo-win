@@ -124,8 +124,8 @@ VPN/TUN routing conflict (suspected cause of the TCP 22 timeout on this PC):
 Never start herdr from an Administrator window (see the Administrator note above).
 
 ## Known risks
-- Windows dispatcher answers `uname -s` with "Windows_NT" (resources/peer-dispatch.ps1);
-  stock `herdr machine add` may reject it. UNVERIFIED.
+- Windows dispatcher answers Herdr's probes like Linux x86_64 with an `/c/...` herdr path (Herdr rejects
+  `Windows_NT`: "unsupported remote platform"); `herdr machine add` from the Mac must now succeed. UNVERIFIED.
 - Mac allow-list vs real sshd probes: UNVERIFIED.
 
 ## FAILURE REPORT (fill in, send back)

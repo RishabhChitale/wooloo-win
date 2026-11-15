@@ -98,7 +98,7 @@ Nothing has been run on a real Windows PC or between two real machines yet. CI b
 
 - Windows ConPTY: live terminal rendering, keyboard encoding, paste, resize, scrolling in the Windows app.
 - The Windows local Herdr named-pipe endpoint (derived from the Herdr source; `pipe_path` override exists).
-- The PC dispatcher answering Herdr's machine-add probe (`uname -s` as `Windows_NT`, provisional). `herdr machine add` from the Mac to the PC may fail.
+- The PC dispatcher answering Herdr's machine-add probe (answers `Linux`/`x86_64` and an `/c/...` path like a POSIX host, since Herdr rejects `Windows_NT`; the real commands still run the Windows herdr.exe). Verify with `herdr machine add` from the Mac.
 - `administrators_authorized_keys`: the Pair flow writing it (needs an elevated app) and the ACL (`SYSTEM` and `Administrators` only) so sshd accepts it.
 - sshd `restrict` behaviour (no PTY) with Herdr's bridges on both macOS and Windows sshd, and multi-line `SSH_ORIGINAL_COMMAND` through Windows sshd.
 - Herdr's request strings are from version 0.9.5 (allow-list is `provisional`); other versions may differ. Version skew between the two Herdr builds is untested.

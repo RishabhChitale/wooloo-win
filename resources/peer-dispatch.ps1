@@ -115,8 +115,11 @@ $MARKER = [string]$al.marker
 $PREFIX = [string]$al.markerPrefix
 $sess = '[A-Za-z0-9_-]{1,64}'
 $paired = $herdrPath -replace '\\', '/'
-# {herdr} slot: the paired path exactly, bare or single-quoted (Herdr shell-quotes paths with other characters).
-$pairedAlt = '(?:' + [regex]::Escape($paired) + '|' + [regex]::Escape("'" + $paired + "'") + ')'
+# Herdr treats this host as POSIX (uname answers Linux), so it expects an absolute path starting with '/': advertise
+# C:/Users/x/herdr.exe as /c/Users/x/herdr.exe. The {herdr} slot accepts the advertised form and the plain paired path
+# (both name the same paired binary; nothing else matches).
+$advertised = if ($paired -match '^([A-Za-z]):(/.*)$') { '/' + $Matches[1].ToLowerInvariant() + $Matches[2] } else { $paired }
+$pairedAlt = '(?:' + (@($advertised, $paired | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) + '|' + [regex]::Escape("'" + $_ + "'") }) -join '|') + ')'
 
 function ToRegex([string]$t) {
     $seen = @{}
@@ -222,14 +225,14 @@ switch ($entry.name) {
         exit (Run-Sync $syncPath)
     }
     'wooloo-check'  { exit (Run-Herdr ($sa + @('remote-api-bridge', '--check'))) }
-    { $_ -in 'herdr-path-probe', 'sh-path-probe', 'sh-candidates' } { Marker; Say "$paired`n"; exit 0 }
+    { $_ -in 'herdr-path-probe', 'sh-path-probe', 'sh-candidates' } { Marker; Say "$advertised`n"; exit 0 }
     'herdr-client-bridge'      { Marker; exit (Run-Herdr ($sa + @('remote-client-bridge'))) }
     'herdr-client-bridge-idle' { Marker; exit (Run-Herdr ($sa + @('remote-client-bridge', '--idle-timeout-v1'))) }
     'herdr-api-bridge'         { Marker; exit (Run-Herdr ($sa + @('remote-api-bridge'))) }
     'herdr-api-check'          { Marker; exit (Run-Herdr ($sa + @('remote-api-bridge', '--check'))) }
     'herdr-api-discovery' {
         Marker
-        if (Api-Capable) { Say "$paired`n"; exit 0 }
+        if (Api-Capable) { Say "$advertised`n"; exit 0 }
         [Console]::Error.WriteLine('remote Herdr does not support machine API forwarding; update Herdr on this machine')
         exit 2
     }
@@ -240,8 +243,8 @@ switch ($entry.name) {
     }
     'sh-uname' {
         Marker
-        $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'AMD64' { 'x86_64' } 'ARM64' { 'arm64' } default { [string]$env:PROCESSOR_ARCHITECTURE } }
-        Say "Windows_NT`n$arch`n"
+        # Herdr only supports POSIX remotes: answer like Linux x86_64 (the allow-listed commands are the only thing that runs).
+        Say "Linux`nx86_64`n"
         exit 0
     }
     'sh-exists'        { Marker; exit 0 }

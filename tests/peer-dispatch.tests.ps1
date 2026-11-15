@@ -68,7 +68,7 @@ $expect = @{
     'herdr-api-check' = 'herdr-api-bridge-v1'
     'herdr-api-discovery' = 'herdr.cmd'
     'herdr-cached-api' = 'ARGS:--session wooloo remote-api-bridge'
-    'sh-uname' = 'Windows_NT'
+    'sh-uname' = "Linux`nx86_64"
     'sh-path-probe' = 'herdr.cmd'
     'sh-candidates' = 'herdr.cmd'
     'sh-exists' = $MARKER
@@ -92,6 +92,21 @@ $r = Req $byName['herdr-client-bridge'] 'default'
 Check 'allow default session (no --session)' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:remote-client-bridge*') -and -not ($r.Out -like '*--session*'))
 $r = Req $byName['herdr-api-bridge'] 'wooloo' ("'" + $fwd + "'")
 Check 'allow single-quoted herdr path' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:--session wooloo remote-api-bridge*'))
+
+# POSIX-style answers: path probes return /c/... (absolute for a POSIX client) and that form is accepted as {herdr}
+$adv = '/' + $fwd.Substring(0, 1).ToLowerInvariant() + $fwd.Substring(2)
+$r = Req $byName['sh-path-probe']
+Check 'path probe advertises POSIX-style absolute path' (($r.Code -eq 0) -and ($r.Out -like "*`n$adv`n*"))
+$r = Req $byName['sh-uname']
+Check 'uname answers Linux then x86_64 after the marker' (($r.Code -eq 0) -and ($r.Out -like "*$MARKER*Linux*x86_64*") -and -not ($r.Out -like '*Windows_NT*'))
+$r = Req $byName['sh-saved-bridge'] 'wooloo' $adv
+Check 'allow advertised POSIX-style herdr path' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:--session wooloo remote-client-bridge*'))
+$r = Req $byName['sh-session-list'] 'wooloo' $adv
+Check 'session list via advertised path' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:session list --json*'))
+$r = Req $byName['sh-exists'] 'wooloo' $adv
+Check 'sh-exists via advertised path' (($r.Code -eq 0) -and ($r.Out -like "*$MARKER*"))
+$r = Req $byName['sh-saved-bridge'] 'default' $adv
+Check 'default session via advertised path' (($r.Code -eq 0) -and ($r.Out -like '*ARGS:remote-client-bridge*') -and -not ($r.Out -like '*--session*'))
 
 # api probe failing: discovery exits 2, cached exits 78
 $env:FAKE_NOCHECK = '1'
