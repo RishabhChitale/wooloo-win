@@ -11,7 +11,6 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - add_machine({label, ssh_target, session?}) -> Machine   // args are snake_case (unlike the other commands, which use camelCase keys). Machine also has optional `pipe_path` (local Windows API pipe override, set in machines.toml)
 - remove_machine(id)
 - reconnect_machine(id)
-- start_local_herdr(id)  (local machines only; starts the local Herdr server)
 - start_local_herdr() -> void       // spawns `herdr server` detached (hidden window on Windows); errors as a string. The machine reconnects on its own retry or reconnect_machine(id).
 - open_space(machine_id, workspace_id)       // subscribe terminal endpoint for that Space's selected tab
 - select_tab(machine_id, tab_id)

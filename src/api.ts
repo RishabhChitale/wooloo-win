@@ -51,7 +51,7 @@ async function createTauriApi(): Promise<Api> {
     addMachine: (m) => invoke("add_machine", m),
     removeMachine: (id) => invoke("remove_machine", { id }),
     reconnectMachine: (id) => invoke("reconnect_machine", { id }),
-    startLocalHerdr: (id) => invoke("start_local_herdr", { id }),
+    startLocalHerdr: (id) => invoke("start_local_herdr"),
     openSpace: (machineId, workspaceId) => invoke("open_space", { machineId, workspaceId }),
     selectTab: (machineId, tabId) => invoke("select_tab", { machineId, tabId }),
     focusPane: (machineId, paneId) => invoke("focus_pane", { machineId, paneId }),
