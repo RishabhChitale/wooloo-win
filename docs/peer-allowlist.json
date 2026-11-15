@@ -1,6 +1,6 @@
 {
   "format": "wooloo-peer-allowlist-v1",
-  "provisional": true,
+  "provisional": false,
   "revision": 2,
   "herdrVersion": "0.9.5",
   "source": "herdrdev/herdr 2ecf19a src/remote/attach.rs, src/remote/saved.rs",
