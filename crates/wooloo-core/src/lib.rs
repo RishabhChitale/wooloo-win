@@ -1,5 +1,6 @@
 //! wooloo-core: Herdr client core (no Tauri dependency).
 pub mod api;
+pub mod discover;
 pub mod error;
 pub mod machines;
 pub mod manager;
