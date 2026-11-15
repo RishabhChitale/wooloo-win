@@ -63,6 +63,7 @@ function Run-Sync([string]$exe) {
     $line = New-Object IO.MemoryStream
     $total = 0L
     $over = $false
+    $diag = ''
     $childGone = $false
     $readTask = $in.ReadAsync($buf, 0, $buf.Length)
     try {
@@ -75,12 +76,12 @@ function Run-Sync([string]$exe) {
                 break
             }
             $total += $n
-            if ($total -gt $SYNC_MAX_TOTAL) { $over = $true; break }
+            if ($total -gt $SYNC_MAX_TOTAL) { $over = $true; $diag = "total=$total cap=$SYNC_MAX_TOTAL"; break }
             $i = 0
             while ($i -lt $n) {
                 $nl = [Array]::IndexOf($buf, [byte]10, $i, $n - $i)
                 $end = if ($nl -ge 0) { $nl } else { $n }
-                if ($line.Length + ($end - $i) -gt $SYNC_MAX_LINE) { $over = $true; break }
+                if ($line.Length + ($end - $i) -gt $SYNC_MAX_LINE) { $over = $true; $diag = "line=$($line.Length) add=$($end - $i) cap=$SYNC_MAX_LINE total=$total n=$n i=$i nl=$nl"; break }
                 $line.Write($buf, $i, $end - $i)
                 if ($nl -lt 0) { break }
                 $line.WriteByte(10)
@@ -97,6 +98,7 @@ function Run-Sync([string]$exe) {
     }
     if ($over) {
         [Console]::Error.WriteLine('wooloo-peer-bridge: sync input over the size limit')
+        [Console]::Error.WriteLine("wooloo-peer-bridge: diag $diag")   # TEMP diagnostic
         try { $childIn.Close() } catch {}
         if (-not $p.WaitForExit(2000)) { try { $p.Kill() } catch {} }
         try { $outTask.Wait(2000) | Out-Null } catch {}
