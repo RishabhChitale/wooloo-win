@@ -15,7 +15,7 @@ async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => void): void {
+export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => void): () => void {
   const dlg = document.createElement("dialog");
   dlg.id = "pairdlg";
   dlg.innerHTML = `
@@ -76,4 +76,5 @@ export function initPair(addDlg: HTMLDialogElement, onAdded: (m: Machine) => voi
   btn.textContent = "Pair device…";
   btn.addEventListener("click", () => { addDlg.close(); dlg.showModal(); });
   (addDlg.querySelector("form") ?? addDlg).appendChild(btn);
+  return () => { if (addDlg.open) addDlg.close(); dlg.showModal(); };
 }

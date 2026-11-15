@@ -8,6 +8,8 @@ export interface Api {
   addMachine(m: { label: string; ssh_target: string; session?: string; pipe_path?: string }): Promise<Machine>;
   removeMachine(id: string): Promise<void>;
   reconnectMachine(id: string): Promise<void>;
+  /** Start a local Herdr server (local machines only). */
+  startLocalHerdr(id: string): Promise<void>;
   openSpace(machineId: string, workspaceId: string): Promise<void>;
   selectTab(machineId: string, tabId: string): Promise<void>;
   focusPane(machineId: string, paneId: string): Promise<void>;
@@ -49,6 +51,7 @@ async function createTauriApi(): Promise<Api> {
     addMachine: (m) => invoke("add_machine", m),
     removeMachine: (id) => invoke("remove_machine", { id }),
     reconnectMachine: (id) => invoke("reconnect_machine", { id }),
+    startLocalHerdr: (id) => invoke("start_local_herdr", { id }),
     openSpace: (machineId, workspaceId) => invoke("open_space", { machineId, workspaceId }),
     selectTab: (machineId, tabId) => invoke("select_tab", { machineId, tabId }),
     focusPane: (machineId, paneId) => invoke("focus_pane", { machineId, paneId }),
@@ -216,7 +219,7 @@ export function createMockApi(): Api {
       machines.push(mm);
       snaps[mm.id] = { machine_id: mm.id, workspaces: [] };
       emitStatus({ machine_id: mm.id, state: "connecting" });
-      setTimeout(() => emitStatus({ machine_id: mm.id, state: "failed", reason: "mock: cannot reach host", retry_in_secs: 20 }), 1200);
+      setTimeout(() => emitStatus({ machine_id: mm.id, state: "failed", reason: "mock: cannot reach host", tried: ["ssh user@host:22"], hint: "check the host is on", retry_in_secs: 20 }), 1200);
       return mm;
     },
     removeMachine: async (id) => { const i = machines.findIndex((m) => m.id === id); if (i >= 0) machines.splice(i, 1); current.delete(id); },
@@ -224,6 +227,7 @@ export function createMockApi(): Api {
       emitStatus({ machine_id: id, state: "connecting" });
       setTimeout(() => emitStatus({ machine_id: id, state: id === "dead" ? "failed" : "connected", reason: id === "dead" ? "ssh: timed out" : undefined, retry_in_secs: id === "dead" ? 30 : undefined }), 800);
     },
+    startLocalHerdr: async (id) => { emitStatus({ machine_id: id, state: "connecting" }); setTimeout(() => emitStatus({ machine_id: id, state: "connected" }), 800); },
     openSpace: async (mid, wid) => {
       const w = snaps[mid]?.workspaces.find((x) => x.id === wid);
       if (!w) return;

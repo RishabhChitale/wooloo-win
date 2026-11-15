@@ -15,6 +15,10 @@ export interface MachineStatus {
   machine_id: string;
   state: "connected" | "connecting" | "failed";
   reason?: string;
+  /** Paths/addresses the core tried (optional, added by the Rust side). */
+  tried?: string[];
+  /** Short suggested next step (optional). */
+  hint?: string;
   retry_in_secs?: number;
 }
 

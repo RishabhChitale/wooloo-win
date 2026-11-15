@@ -6,12 +6,15 @@ import { clipboardShortcut, mapKeyEvent } from "./keys";
 import { measureCell, PaneView } from "./terminal";
 import { applyMeta, hostOf, peerNodes, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
 import { CATEGORY_ORDER } from "./grouping";
+import { diagnosticsText, failureView, type FailureView } from "./diagnostics";
 import { skewBanners } from "./version-skew";
 import type { SpaceMetaPatch, Machine, MachineStatus, Snapshot, SpaceMeta, SurfaceEvent, SyncStatus } from "./types";
 
+declare const __APP_VERSION__: string;
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev";
 const app = document.getElementById("app")!;
 app.innerHTML = `
-  <aside id="rail"><div class="rail-head"><span>MACHINES</span><button id="add" title="Add machine">+ Add</button></div><div id="machines"></div></aside>
+  <aside id="rail"><div class="rail-head"><span>MACHINES</span><span class="rail-btns"><button id="pair" title="Pair with another computer running wooloo">Pair device</button><button id="add" title="Add machine">+ Add</button></span></div><div id="machines"></div></aside>
   <main id="main"><div id="skew" hidden></div><div id="tabs"></div><div id="work"><div id="panes" tabindex="0"><div id="placeholder">Select a Space</div></div><aside id="notes" hidden></aside></div></main>
   <dialog id="dlg"><form method="dialog" id="addform">
     <strong>Add machine</strong>
@@ -40,6 +43,30 @@ const views = new Map<string, PaneView>();
 const fire = (p: Promise<unknown>) => { p.catch((e) => console.warn("backend call failed", e)); }; // never block on dead machines
 const skey = (m: string, t: string) => `${m}|${t}`;
 
+function failureBox(m: Machine, st: MachineStatus | undefined, fv: FailureView): HTMLElement {
+  const box = document.createElement("div"); box.className = "fail";
+  const t = document.createElement("div"); t.className = "fail-reason"; t.textContent = fv.reason; box.appendChild(t);
+  if (fv.hint) { const h = document.createElement("div"); h.className = "fail-hint"; h.textContent = fv.hint; box.appendChild(h); }
+  if (fv.tried.length) {
+    const tr = document.createElement("div"); tr.className = "fail-tried";
+    tr.textContent = "Tried:\n" + fv.tried.map((x) => `- ${x}`).join("\n"); box.appendChild(tr);
+  }
+  if (fv.retry) { const r = document.createElement("div"); r.className = "fail-hint"; r.textContent = fv.retry; box.appendChild(r); }
+  const bar = document.createElement("div"); bar.className = "fail-btns";
+  if (fv.canStart) {
+    const b = document.createElement("button"); b.textContent = "Start Herdr"; b.title = "Start the local Herdr server";
+    b.addEventListener("click", () => fire(api.startLocalHerdr(m.id))); bar.appendChild(b);
+  }
+  const c = document.createElement("button"); c.textContent = "Copy diagnostics";
+  c.addEventListener("click", async () => {
+    const text = diagnosticsText(m, st, { appVersion: APP_VERSION, userAgent: navigator.userAgent });
+    try { await navigator.clipboard.writeText(text); c.textContent = "Copied"; } catch { c.textContent = "Copy failed"; }
+    setTimeout(() => { c.textContent = "Copy diagnostics"; }, 1500);
+  });
+  bar.appendChild(c); box.appendChild(bar);
+  return box;
+}
+
 function renderRail() {
   machinesEl.replaceChildren();
   for (const m of machines) {
@@ -48,7 +75,8 @@ function renderRail() {
     row.className = "machine-row";
     const tip = st ? `${st.state}${st.reason ? `: ${st.reason}` : ""}${st.retry_in_secs ? ` (retry in ${st.retry_in_secs}s)` : ""}` : "unknown";
     row.innerHTML = `<span class="dot ${st?.state ?? ""}" title="${esc(tip)}"></span><span class="label" title="${esc(m.ssh_target ?? "local")}">${esc(m.label)}</span>
-      <span class="acts"><button data-a="re" title="Reconnect">&#8635;</button><button data-a="rm" title="Remove machine">&#10005;</button></span>`;
+      <span class="acts"><button data-a="pair" title="Pair device">&#128279;</button><button data-a="re" title="Reconnect">&#8635;</button><button data-a="rm" title="Remove machine">&#10005;</button></span>`;
+    row.querySelector('[data-a="pair"]')!.addEventListener("click", () => openPair?.());
     row.querySelector('[data-a="re"]')!.addEventListener("click", () => fire(api.reconnectMachine(m.id)));
     row.querySelector('[data-a="rm"]')!.addEventListener("click", () => {
       fire(api.removeMachine(m.id));
@@ -57,6 +85,8 @@ function renderRail() {
       renderRail();
     });
     machinesEl.appendChild(row);
+    const fv = failureView(m, st);
+    if (fv) machinesEl.appendChild(failureBox(m, st, fv));
     const sy = syncRows.find((r) => r.machine_id === m.id);
     if (sy) {
       const b = document.createElement("div"); b.className = `sync-badge ${sy.syncing ? "syncing" : sy.state === "ok" ? "synced" : "offline"}`;
@@ -67,7 +97,7 @@ function renderRail() {
     const spaces = applyMeta(hostOf(m, metaNode, peerNodes(syncRows)), snaps.get(m.id)?.workspaces ?? [], metas);
     if (!spaces.length) {
       const e = document.createElement("div"); e.className = "empty";
-      e.textContent = st?.state === "failed" ? "unreachable" : st?.state === "connecting" ? "connecting…" : "no spaces";
+      e.textContent = st?.state === "failed" ? "unreachable (details above)" : st?.state === "connecting" ? "connecting…" : "no spaces";
       machinesEl.appendChild(e);
     }
     for (const g of groupSpaces(spaces)) {
@@ -295,7 +325,9 @@ function reportViewport() {
 new ResizeObserver(() => reportViewport()).observe(panesEl);
 
 $("add").addEventListener("click", () => dlg.showModal());
-import("./pair").then((m) => m.initPair(dlg, (m2) => { if (!machines.some((x) => x.id === m2.id)) machines.push(m2); renderRail(); }));
+let openPair: (() => void) | null = null;
+import("./pair").then((m) => { openPair = m.initPair(dlg, (m2) => { if (!machines.some((x) => x.id === m2.id)) machines.push(m2); renderRail(); }); });
+$("pair").addEventListener("click", () => openPair?.());
 $("cancel").addEventListener("click", () => dlg.close());
 $<HTMLFormElement>("addform").addEventListener("submit", (e) => {
   const f = e.target as HTMLFormElement;
