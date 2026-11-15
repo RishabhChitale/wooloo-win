@@ -18,17 +18,22 @@ Layout (monorepo, git root ~/Claude/wooloo-win):
 - send_paste(machine_id, pane_id, text)
 - resize_viewport(machine_id, cols, rows)
 - scroll(machine_id, pane_id, lines)
-- set_space_meta({uuid?, herdr_id?, host, fields})  // fields: name, category, color, order, notes, pinned_tabs (allow-listed only); emits meta-changed
-- get_meta() -> {node, spaces:[{uuid, host, herdr_id, name, category, color, order, notes, pinned_tabs}]}
+- set_space_meta({machineId, herdrId, fields, uuid?}) -> Space   // ONE object arg, camelCase keys. fields: name, category, color, order, notes, pinned_tabs, deleted (allow-listed only). Returns the full merged Space record (see get_meta) with per-field hlc so the UI updates without a refetch. Emits meta-changed.
+- get_meta() -> {node, spaces:[Space]}
+  Space = {uuid, host, herdr_id, name, category, color, order, notes, pinned_tabs, deleted:boolean, hlc:{<field>:{wall,counter}}}  (hlc per field, incl. `deleted`)
+  `host` = the stable NODE ID of the machine that owns the Herdr server (local = this app's own node id; a paired ssh machine = the peer's node id, learned at pairing / first sync handshake). Never a user-editable label.
+  Tombstones: deleted Spaces are INCLUDED with deleted:true (and the deleted hlc) so they stay deleted across peers; the UI hides them.
 - sync_now(machine_id) -> SyncReport {peer,sent,received,stored,rejected,peer_accepted,peer_rejected}   // ssh machines only; runs ssh to the paired `wooloo-peer-<id>` alias with the allow-listed request `wooloo-peer sync`
-- sync_status() -> MachineSync[] {machine_id, syncing, last_ok_ms?, last_error?, last_report?}
+- sync_status() -> SyncStatus[] {machine_id, peer_label, state:"connecting"|"ok"|"offline"|"skew", last_ok_ms, pending, local_herdr_version, peer_herdr_version, syncing, last_error?, last_report?}
+  last_ok_ms is epoch MILLISECONDS UTC (null/absent = never synced). pending = count of local ops not yet acked by that peer. Herdr versions are strings, null when unknown.
   Replica is persisted in the app config dir as meta-state.json. Allow-list (docs/peer-allowlist.json) is at revision 2 (new entry wooloo-sync).
 - copy text is done in the frontend (navigator.clipboard)
 
 ## Tauri events (Rust -> frontend, via app.emit)
 - "machine-status"  {machine_id, state:"connected"|"connecting"|"failed", reason?, retry_in_secs?}
 - "meta-changed"    {machine_id, source:"local"|"sync"}   // Space metadata replica changed (machine_id = own node id for local edits)
-- "snapshot"        {machine_id, workspaces:[{id,label,category?,tabs:[{id,label,panes:[{id,...}]}], agent_state?}], ...}  (JSON passed through from herdr session.snapshot, lightly normalised)
+- "sync-status"     SyncStatus entry (same shape as sync_status() items)   // emitted on every state change (connecting/ok/offline/skew) and after each sync round
+- "snapshot"        {machine_id, workspaces:[{id,label,category?,presence?:string[],tabs:[{id,label,panes:[{id,...}]}], agent_state?}], ...}  (JSON passed through from herdr session.snapshot, lightly normalised)
 - "surface"         {machine_id, tab_id, panes:[{pane_id, x,y,cols,rows, cursor:{x,y,visible,shape}, rows_data:[Cell[]] | patch}] }
   Cell = {ch:string, fg:[r,g,b]|null, bg:[r,g,b]|null, bold,italic,underline,inverse,wide}
   Per pane: `cursor` is always present ({x,y,visible,shape:string}; shape "block" for 0, "other" otherwise, pane-local coords). `rows_data` is the pane's full grid (rows of Cell[], one Cell per column). `dirty_rows` is per pane (pane-local row indices that changed; absent/empty on a full surface). There is no top-level dirty_rows.
