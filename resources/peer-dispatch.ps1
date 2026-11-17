@@ -233,9 +233,13 @@ switch ($entry.name) {
             if ($Sync -notmatch '^[A-Za-z]:[A-Za-z0-9._ /\\()-]+$' -or $Sync -match '\.\.') { Deny 'bad sync path' }
             $syncPath = $Sync
         } else {
-            $sc = Get-Command wooloo-sync.exe -ErrorAction SilentlyContinue
-            if (-not $sc) { Deny 'wooloo-sync not found' }
-            $syncPath = $sc.Source
+            # shipped next to this script by the app (copied there at pairing and at every app start), else on PATH
+            $syncPath = Join-Path $PSScriptRoot 'wooloo-sync.exe'
+            if (-not (Test-Path -LiteralPath $syncPath -PathType Leaf)) {
+                $sc = Get-Command wooloo-sync.exe -ErrorAction SilentlyContinue
+                if (-not $sc) { Deny 'wooloo-sync not found' }
+                $syncPath = $sc.Source
+            }
         }
         if (-not (Test-Path -LiteralPath $syncPath -PathType Leaf)) { Deny 'wooloo-sync not found' }
         exit (Run-Sync $syncPath)

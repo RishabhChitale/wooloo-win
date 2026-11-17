@@ -24,8 +24,20 @@ pub fn refresh_dispatcher(app: &AppHandle) {
     if !dst.exists() {
         return;
     }
-    if let Ok(src) = app.path().resolve(format!("resources/{DISPATCHER}"), BaseDirectory::Resource) {
-        let _ = std::fs::copy(&src, &dst);
+    copy_bundled(app, &cfg);
+}
+
+const SYNC_BIN: &str = "wooloo-sync.exe";
+
+/// Copy the bundled dispatcher and sync responder into the config dir (errors ignored: best effort).
+fn copy_bundled(app: &AppHandle, cfg: &std::path::Path) {
+    for name in [DISPATCHER, SYNC_BIN] {
+        if let Ok(src) = app.path().resolve(format!("resources/{name}"), BaseDirectory::Resource) {
+            // the repo carries an empty placeholder; the release build replaces it with the real binary
+            if std::fs::metadata(&src).map(|m| m.len() > 0).unwrap_or(false) {
+                let _ = std::fs::copy(&src, cfg.join(name));
+            }
+        }
     }
 }
 
@@ -353,6 +365,7 @@ fn pair_accept_inner(app: &AppHandle, state: &State<App>, code: String, include_
     let src = app.path().resolve(format!("resources/{DISPATCHER}"), BaseDirectory::Resource).map_err(|e| format!("cannot locate bundled resources/{DISPATCHER}: {e}"))?;
     let dst = cfg.join(DISPATCHER);
     std::fs::copy(&src, &dst).map_err(|e| format!("cannot copy dispatcher {} to {}: {e}", src.display(), dst.display()))?;
+    copy_bundled(&app, &cfg);
 
     // 2. authorized_keys entry for the peer's key (forced command, restrict)
     let (admin, elevated) = admin_flags();

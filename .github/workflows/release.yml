@@ -24,6 +24,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build wooloo-sync.exe (the PC's sync responder, shipped next to the dispatcher)
+        shell: bash
+        run: |
+          cargo build --release -p wooloo-sync
+          cp target/release/wooloo-sync.exe resources/wooloo-sync.exe
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
