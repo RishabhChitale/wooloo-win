@@ -2,6 +2,7 @@ import type { PaneSurface, RGB } from "./types";
 import { batchRow, fontFor, rgbCss } from "./runs";
 import { isSelected, normalizeSel, selectionText, type CellPos } from "./selection";
 import { theme } from "./theme";
+import { snapCellSize } from "./cell";
 
 export const FONT_FAMILY = '"Cascadia Mono", Consolas, "SF Mono", Menlo, monospace';
 export const FONT_PX = 14;
@@ -12,13 +13,19 @@ export const DEF_BG = hex(theme.background);
 
 export interface CellSize { w: number; h: number }
 
-let measured: CellSize | null = null;
+let measured: (CellSize & { dpr: number }) | null = null;
+/** Cell size in CSS px, snapped to whole device pixels and re-measured when the display scale changes. */
 export function measureCell(): CellSize {
-  if (measured) return measured;
+  const dpr = window.devicePixelRatio || 1;
+  if (measured && measured.dpr === dpr) return measured;
   const c = document.createElement("canvas").getContext("2d")!;
   c.font = fontFor({ bold: false, italic: false }, FONT_PX, FONT_FAMILY);
-  measured = { w: Math.max(1, c.measureText("M").width), h: Math.ceil(FONT_PX * 1.25) };
+  measured = { dpr, ...snapCellSize(c.measureText("M").width, FONT_PX, dpr) };
   return measured;
+}
+// The first measurement can happen before the terminal font has loaded; measure again once fonts are ready.
+if (typeof document !== "undefined" && document.fonts?.ready) {
+  void document.fonts.ready.then(() => { measured = null; window.dispatchEvent(new Event("resize")); });
 }
 
 export interface PaneCallbacks {
@@ -31,7 +38,7 @@ export interface PaneCallbacks {
 export class PaneView {
   readonly el: HTMLDivElement;
   private canvas = document.createElement("canvas");
-  private ctx = this.canvas.getContext("2d")!;
+  private ctx = this.canvas.getContext("2d", { alpha: false })!; // opaque: allows sharper subpixel text
   private surf: PaneSurface | null = null;
   private sel: [CellPos, CellPos] | null = null;
   private anchor: CellPos | null = null;
@@ -110,7 +117,7 @@ export class PaneView {
     if (!s) return;
     const { w, h } = measureCell();
     const dpr = window.devicePixelRatio || 1;
-    const pw = Math.round(s.cols * w), ph = s.rows * h;
+    const pw = s.cols * w, ph = s.rows * h;
     if (this.canvas.width !== Math.round(pw * dpr) || this.canvas.height !== Math.round(ph * dpr)) {
       this.canvas.width = Math.round(pw * dpr); this.canvas.height = Math.round(ph * dpr);
       this.canvas.style.width = `${pw}px`; this.canvas.style.height = `${ph}px`;
@@ -120,7 +127,7 @@ export class PaneView {
     g.textBaseline = "alphabetic";
     g.fillStyle = theme.background;
     g.fillRect(0, 0, pw, ph);
-    const baseline = Math.round(h * 0.78);
+    const baseline = Math.round(h * 0.78 * dpr) / dpr;
     s.rows_data.forEach((row, y) => {
       const top = y * h;
       for (const run of batchRow(row, DEF_FG, DEF_BG)) {

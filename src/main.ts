@@ -4,6 +4,8 @@ import { categoryLineColors } from "./theme";
 import { CATEGORY_TITLES, groupSpaces } from "./grouping";
 import { clipboardShortcut, mapKeyEvent } from "./keys";
 import { measureCell, PaneView } from "./terminal";
+import { pathsToPasteText } from "./drop";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { applyMeta, hostOf, peerNodes, moveOrder, presenceLabel, syncBadge, validName, validNotes, isHexColor, PALETTE, type DisplaySpace } from "./meta";
 import { CATEGORY_ORDER } from "./grouping";
 import { diagnosticsText, failureView, type FailureView } from "./diagnostics";
@@ -375,6 +377,14 @@ $<HTMLFormElement>("addform").addEventListener("submit", (e) => {
   f.reset();
 });
 
+let toastTimer: number | undefined;
+function toast(msg: string) {
+  let t = document.getElementById("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add("show");
+  window.clearTimeout(toastTimer); toastTimer = window.setTimeout(() => t!.classList.remove("show"), 5000);
+}
+
 function esc(s: string) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!); }
 
 (async () => {
@@ -390,6 +400,18 @@ function esc(s: string) { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
     syncRows = syncRows.some((r) => r.machine_id === st.machine_id) ? syncRows.map((r) => (r.machine_id === st.machine_id ? st : r)) : [...syncRows, st];
     renderRail(); renderSkew();
   });
+  // Files dropped from Explorer: type their paths into the focused pane of this computer's own Spaces. A path on this PC means
+  // nothing to another machine, so say so instead of typing it there.
+  try {
+    await getCurrentWebview().onDragDropEvent((ev) => {
+      if (ev.payload.type !== "drop") return;
+      const m = machines.find((x) => x.id === selMachine);
+      if (!m || !focusedPane) { toast("Open a Space and click a pane first, then drop the files."); return; }
+      if (m.kind !== "local") { toast(`Dropped files are on this PC, but ${m.label} is a different computer. Drop works in this computer's Spaces for now.`); return; }
+      const text = pathsToPasteText(ev.payload.paths);
+      if (text) fire(api.sendPaste(m.id, focusedPane, text));
+    });
+  } catch (e) { console.warn("drag-drop listener failed", e); }
   machines = await api.listMachines();
   void refreshMeta();
   setInterval(renderRail, 5000); // refresh the "2s ago" age text

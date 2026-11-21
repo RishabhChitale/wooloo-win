@@ -66,3 +66,6 @@ dialog .primary { background: var(--accent); color: #11111B; }
 .conn-step { font-family: ui-monospace, Consolas, monospace; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .conn-step.ok { color: var(--green); } .conn-step.fail { color: var(--red); } .conn-step.skip { color: var(--sub); } .conn-step.warn { color: var(--yellow, #d9a400); }
 .conn-hint { color: var(--sub); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
+
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: 70vw; padding: 10px 14px; background: #313244; color: #cdd6f4; border: 1px solid #585b70; border-radius: 8px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 50; }
+#toast.show { opacity: 1; }
