@@ -40,75 +40,6 @@ if ($Herdr -ne '') {
 }
 if (-not (Test-Path -LiteralPath $herdrPath -PathType Leaf)) { Deny 'herdr not found' }
 
-# Sync passthrough with the same caps as the Mac dispatcher (docs/peer-pairing.md "Sync cap"): a line over 1 MiB or a
-# total over 32 MiB stops the stream ("wooloo-peer-bridge: sync input over the size limit" on stderr, exit 65; lines
-# already forwarded stay delivered). The exchange is ping-pong over one open stream, so every complete line is forwarded
-# to wooloo-sync and flushed at once (never buffered to EOF), and its stdout is forwarded as it is produced. Input is
-# only bytes on a pipe: never parsed, expanded or evaluated. Its stderr is inherited.
-$SYNC_MAX_LINE = 1048576
-$SYNC_MAX_TOTAL = 33554432
-function Run-Sync([string]$exe) {
-    $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = $exe
-    $psi.Arguments = 'exchange'
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $p = [Diagnostics.Process]::Start($psi)
-    $childIn = $p.StandardInput.BaseStream
-    $stdout = [Console]::OpenStandardOutput()
-    $outTask = $p.StandardOutput.BaseStream.CopyToAsync($stdout, 4096)
-    $in = [Console]::OpenStandardInput()
-    $buf = New-Object byte[] 65536
-    $line = New-Object IO.MemoryStream
-    $total = 0L
-    $over = $false
-    $diag = ''
-    $childGone = $false
-    $readTask = $in.ReadAsync($buf, 0, $buf.Length)
-    try {
-        while ($true) {
-            $first = [Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]@($readTask, $outTask))
-            if ($first -eq 1 -and -not $readTask.IsCompleted) { $childGone = $true; break }   # wooloo-sync finished
-            $n = $readTask.Result
-            if ($n -le 0) {
-                if ($line.Length -gt 0) { $childIn.Write($line.GetBuffer(), 0, [int]$line.Length); $childIn.Flush() }
-                break
-            }
-            $total += $n
-            if ($total -gt $SYNC_MAX_TOTAL) { $over = $true; $diag = "total=$total cap=$SYNC_MAX_TOTAL"; break }
-            $i = 0
-            while ($i -lt $n) {
-                $nl = [Array]::IndexOf($buf, [byte]10, $i, $n - $i)
-                $end = if ($nl -ge 0) { $nl } else { $n }
-                if ($line.Length + ($end - $i) -gt $SYNC_MAX_LINE) { $over = $true; $diag = "line=$($line.Length) add=$($end - $i) cap=$SYNC_MAX_LINE total=$total n=$n i=$i nl=$nl"; break }
-                $line.Write($buf, $i, $end - $i)
-                if ($nl -lt 0) { break }
-                $line.WriteByte(10)
-                $childIn.Write($line.GetBuffer(), 0, [int]$line.Length)
-                $childIn.Flush()
-                $line.SetLength(0)
-                $i = $nl + 1
-            }
-            if ($over) { break }
-            $readTask = $in.ReadAsync($buf, 0, $buf.Length)
-        }
-    } catch [IO.IOException] {
-        $childGone = $true   # wooloo-sync closed its stdin
-    }
-    if ($over) {
-        [Console]::Error.WriteLine('wooloo-peer-bridge: sync input over the size limit')
-        if ($env:WOOLOO_PEER_DIAG -eq '1') { [Console]::Error.WriteLine("wooloo-peer-bridge: diag $diag") }   # off by default
-        try { $childIn.Close() } catch {}
-        if (-not $p.WaitForExit(2000)) { try { $p.Kill() } catch {} }
-        try { $outTask.Wait(2000) | Out-Null } catch {}
-        return 65
-    }
-    try { $childIn.Close() } catch {}
-    $p.WaitForExit()
-    try { $outTask.Wait() } catch {}
-    return $p.ExitCode
-}
 
 $al = $alJson | ConvertFrom-Json
 $MARKER = [string]$al.marker
@@ -201,6 +132,11 @@ function Run-Herdr([string[]]$a, [string]$stdinFile = '') {
     return (Start-Process @sp).ExitCode
 }
 
+function Run-Herdr-Exe([string]$exe, [string[]]$a) {
+    $sp = @{ FilePath = $exe; NoNewWindow = $true; Wait = $true; PassThru = $true; ArgumentList = $a }
+    return (Start-Process @sp).ExitCode
+}
+
 # `herdr --session S remote-api-bridge --check </dev/null` must print herdr-api-bridge-v1.
 function Api-Capable {
     $i = [IO.Path]::GetTempFileName(); $o = [IO.Path]::GetTempFileName(); $e = [IO.Path]::GetTempFileName()
@@ -242,7 +178,9 @@ switch ($entry.name) {
             }
         }
         if (-not (Test-Path -LiteralPath $syncPath -PathType Leaf)) { Deny 'wooloo-sync not found' }
-        exit (Run-Sync $syncPath)
+        # Inherit stdio like Run-Herdr. Reading stdin in PowerShell (.NET console stream) over Windows sshd delivers only the
+        # first chunk, so a ping-pong exchange stalls; wooloo-sync enforces the line and record caps itself.
+        exit (Run-Herdr-Exe $syncPath @('exchange'))
     }
     'wooloo-check'  { exit (Run-Herdr ($sa + @('remote-api-bridge', '--check'))) }
     { $_ -in 'herdr-path-probe', 'sh-path-probe', 'sh-candidates' } { Marker; Say "$advertised`n"; exit 0 }

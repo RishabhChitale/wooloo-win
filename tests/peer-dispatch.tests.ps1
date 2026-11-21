@@ -180,7 +180,7 @@ Denied 'sh -s, oversize stdin' '/bin/sh -s' 'studio-mac' ($PREFIX + ('x' * 17000
 Denied 'sh -s with trailing space in command' '/bin/sh -s ' 'studio-mac' ($PREFIX + "uname -s`nuname -m`n")
 Denied 'sh -c from the request' '/bin/sh -c calc'
 
-# --- sync caps and streaming (wooloo-peer sync -> wooloo-sync exchange) ---
+# --- sync streaming (wooloo-peer sync -> wooloo-sync exchange) ---
 # Fake wooloo-sync that echoes every stdin line at once (ping-pong), so a buffering dispatcher would deadlock.
 $echoSync = Join-Path $tmp 'echo-sync.ps1'
 Set-Content -Path $echoSync -Encoding ASCII -Value @(
@@ -216,49 +216,8 @@ $p.StandardInput.Close()
 $done = $p.WaitForExit(15000)
 Check 'sync: normal passthrough exits 0 after stdin closes' ($done -and $p.ExitCode -eq 0)
 if (-not $done) { try { $p.Kill() } catch {} }
-# Cap-boundary cases: payload bytes go to a temp file and are fed with -RedirectStandardInput, so no StreamWriter (and
-# no BOM) can touch them. Always used for these cases; the harness also fails loudly if the BOM-free encoding is missing.
-function RunRawSync([byte[]]$payload) {
-    $env:SSH_ORIGINAL_COMMAND = 'wooloo-peer sync'
-    $raw = Join-Path $tmp 'sync-raw.bin'; $o = Join-Path $tmp 'sync-out.txt'; $e = Join-Path $tmp 'sync-err.txt'
-    [IO.File]::WriteAllBytes($raw, $payload)
-    $p = Start-Process $sh -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $disp, '-Peer', '"studio-mac"', '-Herdr', $fake, '-Sync', $echoCmd) `
-        -PassThru -NoNewWindow -RedirectStandardInput $raw -RedirectStandardOutput $o -RedirectStandardError $e
-    # Windows PowerShell 5.1 quirk: ExitCode reads empty unless the process handle was opened before it exited.
-    $null = $p.Handle
-    $done = $p.WaitForExit(60000)
-    if ($done) { $p.WaitForExit() }   # flush the async stream state before reading ExitCode and the output files
-    if (-not $done) { try { $p.Kill() } catch {} }
-    [pscustomobject]@{ Done = $done; Code = $(if ($done) { $p.ExitCode } else { -1 }); Out = (Get-Content -Raw -LiteralPath $o); Err = (Get-Content -Raw -LiteralPath $e) }
-}
-# a line over 1 MiB (1,048,577 bytes + LF): exit 65 + message
-$raw2 = New-Object byte[] 1048578
-for ($k = 0; $k -lt 1048577; $k++) { $raw2[$k] = 120 }
-$raw2[1048577] = 10
-$r = RunRawSync $raw2
-Check 'sync: line over 1 MiB -> exit 65' ($r.Done -and $r.Code -eq 65)
-Check 'sync: line over 1 MiB -> message' ($r.Err -like '*wooloo-peer-bridge: sync input over the size limit*')
-# a line of exactly 1,048,576 bytes (newline not counted) is at the cap and still passes
-# Mac rule (awk, LC_ALL=C): length of the line WITHOUT its newline, in bytes, > 1048576 is refused; ASCII so chars == bytes.
-$raw = New-Object byte[] 1048577
-for ($k = 0; $k -lt 1048576; $k++) { $raw[$k] = 121 }
-$raw[1048576] = 10
-$r = RunRawSync $raw
-# Output is 'ECHO:' (5) + the line (1,048,576) + CRLF from the fake child's Write-Output (2) = 1,048,583 chars.
-$okOut = ($null -ne $r.Out) -and ($r.Out.Length -ge 1048576 + 5) -and $r.Out.StartsWith('ECHO:yyyy')
-Check 'sync: line at the cap passes' ($r.Done -and $r.Code -eq 0 -and $okOut)
-if (-not ($r.Done -and $r.Code -eq 0 -and $okOut)) { Write-Host "     exit $($r.Code) done=$($r.Done) outlen=$($r.Out.Length) err: $($r.Err)" }
-# total over 32 MiB made of many small lines: exit 65, earlier lines stay delivered
-$p = StartSync $echoCmd
-$errT = $p.StandardError.ReadToEndAsync()
-$outT = $p.StandardOutput.ReadToEndAsync()
-$chunk = ('z' * 1048000) + "`n"
-try { for ($i = 0; $i -lt 34; $i++) { $p.StandardInput.Write($chunk) }; $p.StandardInput.Flush() } catch {}
-$done = $p.WaitForExit(60000)
-Check 'sync: total over 32 MiB -> exit 65' ($done -and $p.ExitCode -eq 65)
-Check 'sync: total over 32 MiB -> message' ($errT.Wait(5000) -and ($errT.Result -like '*wooloo-peer-bridge: sync input over the size limit*'))
-Check 'sync: lines before the cap stayed delivered' ($outT.Wait(5000) -and $outT.Result.StartsWith('ECHO:zzzz'))
-if (-not $done) { try { $p.Kill() } catch {} }
+# Line and record caps are enforced inside wooloo-sync itself (crates/wooloo-sync: MAX_LINE, MAX_OPS); the dispatcher hands
+# stdin to it directly, because reading stdin in PowerShell over Windows sshd only delivers the first chunk.
 Remove-Item Env:SSH_ORIGINAL_COMMAND -ErrorAction SilentlyContinue
 
 Remove-Item -Recurse -Force $tmp
