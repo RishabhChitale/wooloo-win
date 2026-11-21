@@ -10,8 +10,31 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "wooloo", "width": 1280, "height": 800, "minWidth": 640, "minHeight": 400 }],
-    "security": { "csp": null }
+    "windows": [
+      {
+        "title": "wooloo",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 400,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu",
+        "backgroundColor": "#1e1e2e"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
   },
-  "bundle": { "active": true, "resources": {"../resources/peer-dispatch.ps1": "resources/peer-dispatch.ps1", "../resources/wooloo-sync.exe": "resources/wooloo-sync.exe"}, "targets": "all", "icon": ["icons/icon.ico", "icons/icon.png"] }
+  "bundle": {
+    "active": true,
+    "resources": {
+      "../resources/peer-dispatch.ps1": "resources/peer-dispatch.ps1",
+      "../resources/wooloo-sync.exe": "resources/wooloo-sync.exe"
+    },
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  }
 }
