@@ -161,8 +161,24 @@ switch ($entry.name) {
         Say "wooloo-peer-bridge-v1 $v`n"
         exit 0
     }
-    'wooloo-api'    { exit (Run-Herdr ($sa + @('remote-api-bridge'))) }
-    'wooloo-client' { exit (Run-Herdr ($sa + @('remote-client-bridge'))) }
+    'wooloo-api'    {
+        # Session 'herdr-app' = the PC's Herdr app + herdr-core (adapter). Every other session stays on the standalone Herdr server
+        # that wooloo's client bridge needs.
+        if ($session -ne 'herdr-app') { exit (Run-Herdr ($sa + @('remote-api-bridge'))) }
+        $py = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'
+        $compat = Join-Path $PSScriptRoot 'herdr_compat.py'
+        if ((Test-Path -LiteralPath $py) -and (Test-Path -LiteralPath $compat)) { exit (Run-Herdr-Exe $py @('-X', 'utf8', $compat)) }
+        exit (Run-Herdr ($sa + @('remote-api-bridge')))
+    }
+    'wooloo-client' {
+        # Session 'herdr-app': text-mirror client endpoint for the app's terminals (herdr_client.py).
+        if ($session -eq 'herdr-app') {
+            $py = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'
+            $cl = Join-Path $PSScriptRoot 'herdr_client.py'
+            if ((Test-Path -LiteralPath $py) -and (Test-Path -LiteralPath $cl)) { exit (Run-Herdr-Exe $py @('-X', 'utf8', $cl)) }
+        }
+        exit (Run-Herdr ($sa + @('remote-client-bridge')))
+    }
     'wooloo-sync' {
         # Metadata sync responder: no arguments, stdin/stdout are the exchange (docs/sync-protocol.md).
         if ($Sync -ne '') {
