@@ -29,7 +29,9 @@
     "active": true,
     "resources": {
       "../resources/peer-dispatch.ps1": "resources/peer-dispatch.ps1",
-      "../resources/wooloo-sync.exe": "resources/wooloo-sync.exe"
+      "../resources/wooloo-sync.exe": "resources/wooloo-sync.exe",
+      "../resources/herdr_compat.py": "resources/herdr_compat.py",
+      "../resources/herdr_client.py": "resources/herdr_client.py"
     },
     "targets": "all",
     "icon": [
