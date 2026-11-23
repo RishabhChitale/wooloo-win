@@ -360,6 +360,8 @@ function reportViewport() {
   fire(api.resizeViewport(selMachine, cols, rows));
 }
 new ResizeObserver(() => reportViewport()).observe(panesEl);
+// terminal.ts dispatches "resize" once web fonts load (cell metrics change); re-measure then.
+window.addEventListener("resize", reportViewport);
 
 $("add").addEventListener("click", () => dlg.showModal());
 let openPair: (() => void) | null = null;
