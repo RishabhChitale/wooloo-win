@@ -89,9 +89,31 @@ def snapshot(t):
     return {"workspaces": ws, "tabs": tb, "panes": pn, "agents": agents(t), "layouts": layouts(t),
             "focused_workspace_id": fw, "focused_tab_id": ft, "focused_pane_id": None}
 
+def drop(p):
+    """wooloo.drop: the Mac sends a screenshot or dropped file (base64); it is written under ~/.wooloo-drops and the
+    path is returned so the Mac can paste it. Files older than a day are removed on every upload."""
+    import base64, re, os
+    d = H / ".wooloo-drops"
+    d.mkdir(exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", str(p.get("name") or "drop"))[:80].lstrip(".") or "drop"
+    raw = base64.b64decode(p.get("data") or "")
+    if not raw or len(raw) > 25_000_000: raise ValueError("bad upload size")
+    now = time.time()
+    for f in d.iterdir():
+        try:
+            if f.is_file() and now - f.stat().st_mtime > 86400: f.unlink()
+        except OSError: pass
+    path = d / name
+    n = 1
+    while path.exists():
+        path = d / f"{path.stem.rsplit('-', 1)[0] if n > 1 else path.stem}-{n}{path.suffix}"; n += 1
+    path.write_bytes(raw)
+    return {"type": "drop", "path": str(path)}
+
 def handle(m, p):
     if m == "ping":
         return {"type": "pong", "version": "0.9.5", "capabilities": {"endpoint_protocol_generation": 1}}
+    if m == "wooloo.drop": return drop(p)
     t = tree()
     if m == "session.snapshot": return {"type": "session_snapshot", "snapshot": snapshot(t)}
     if m == "pane.get":
