@@ -32,7 +32,8 @@
       "../resources/wooloo-sync.exe": "resources/wooloo-sync.exe",
       "../resources/herdr_compat.py": "resources/herdr_compat.py",
       "../resources/herdr_client.py": "resources/herdr_client.py",
-      "../resources/vt_mini.py": "resources/vt_mini.py"
+      "../resources/vt_mini.py": "resources/vt_mini.py",
+      "../resources/conpty_mini.py": "resources/conpty_mini.py"
     },
     "targets": "all",
     "icon": [

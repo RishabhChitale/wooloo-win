@@ -44,6 +44,8 @@ class Screen:
         self.saved = (0, 0, 0, 0, 0)
         self.cursor_visible = True
         self.autowrap = True
+        self.bracketed = False
+        self.app_cursor = False
         self.tabs = set(range(8, self.cols, 8))
 
     def resize(self, cols, rows):
@@ -236,6 +238,10 @@ class Screen:
                         self.cursor_visible = on
                     elif v == 7:
                         self.autowrap = on
+                    elif v == 2004:
+                        self.bracketed = on
+                    elif v == 1:
+                        self.app_cursor = on
                     elif v in (1049, 1047, 47):
                         self.alt_screen(on, v == 1049)
             return

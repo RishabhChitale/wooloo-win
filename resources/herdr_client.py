@@ -82,6 +82,12 @@ except Exception as _ex:
     vt_mini = None
     log("vt_mini unavailable: %s" % _ex)
 
+try:
+    import conpty_mini
+except Exception as _ex:
+    conpty_mini = None
+    log("conpty_mini unavailable: %s" % _ex)
+
 NOWIN = 0x08000000
 DIRTY = threading.Event()
 _cell_cache = {}
@@ -107,7 +113,7 @@ def clean_env():
 class Observer:
     """Follows one core terminal with `hc attach --observe --json` and keeps a colored screen of it."""
     def __init__(self, tid):
-        self.tid, self.proc, self.scr, self.ready = tid, None, None, False
+        self.tid, self.proc, self.pty, self.scr, self.ready = tid, None, None, None, False
         self.lock = threading.Lock()
         self.last_use = time.time(); self.last_start = 0; self.last_size_check = 0
         self.size = (81, 49)
@@ -123,14 +129,38 @@ class Observer:
     def start(self):
         self.last_start = time.time()
         self.size = self.term_size()
+        self.pty = None; self.proc = None
         with self.lock:
             self.scr = vt_mini.Screen(*self.size); self.ready = False
+        if conpty_mini is not None and not (H / ".local/share/wooloo-peer/no-pty").exists():
+            try:
+                self.pty = conpty_mini.Pty('"%s" attach %s' % (HC, self.tid), self.size[0], self.size[1], clean_env())
+                threading.Thread(target=self.pty_reader, args=(self.pty, self.scr), daemon=True).start()
+                return
+            except Exception as ex:
+                log("pty attach %s failed: %s" % (self.tid, ex)); self.pty = None
         try:
             self.proc = subprocess.Popen([HC, "attach", "--observe", "--json", self.tid], stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, env=clean_env(), creationflags=NOWIN)
         except Exception as ex:
             log("observer start %s: %s" % (self.tid, ex)); self.proc = None; return
         threading.Thread(target=self.reader, args=(self.proc, self.scr), daemon=True).start()
+
+    def pty_reader(self, pty, scr):
+        try:
+            while True:
+                chunk = pty.read()
+                if not chunk: break
+                if b"\x1b[6n" in chunk: pty.write(b"\x1b[1;1R")
+                with self.lock:
+                    scr.feed(chunk)
+                    if scr is self.scr: self.ready = True
+                DIRTY.set()
+        except Exception as ex:
+            log("pty read %s: %s" % (self.tid, ex))
+        finally:
+            if scr is self.scr: self.ready = False
+            DIRTY.set()
 
     def reader(self, proc, scr):
         try:
@@ -148,11 +178,13 @@ class Observer:
             DIRTY.set()
 
     def alive(self):
+        if self.pty is not None: return self.pty.alive()
         return self.proc is not None and self.proc.poll() is None
 
     def stop(self):
         try:
-            if self.proc: self.proc.kill()
+            if self.pty is not None: self.pty.close()
+            elif self.proc: self.proc.kill()
         except Exception:
             pass
 
@@ -280,6 +312,50 @@ def key_worker():
 threading.Thread(target=key_worker, daemon=True).start()
 
 
+KEYSEQ = {"enter": b"\r", "backspace": b"\x7f", "tab": b"\t", "esc": b"\x1b", "delete": b"\x1b[3~",
+          "pageup": b"\x1b[5~", "pagedown": b"\x1b[6~"}
+ARROWS = {"up": "A", "down": "B", "right": "C", "left": "D", "home": "H", "end": "F"}
+
+def live_pty(tid):
+    o = OBS.get(tid)
+    return o if (o is not None and o.pty is not None and o.ready and o.pty.alive()) else None
+
+def send_text(tid, txt, paste):
+    o = live_pty(tid)
+    if o is None: return False
+    body = txt.replace("\r\n", "\n").replace("\n", "\r")
+    data = body.encode("utf-8")
+    if paste and getattr(o.scr, "bracketed", False): data = b"\x1b[200~" + data + b"\x1b[201~"
+    o.pty.write(data)
+    return True
+
+def send_key(tid, name, mods):
+    o = live_pty(tid)
+    if o is None: return False
+    app = bool(getattr(o.scr, "app_cursor", False))
+    m = 1 + (1 if mods & 1 else 0) + (2 if mods & 4 else 0) + (4 if mods & 2 else 0)
+    if name == "shift+tab":
+        data = b"\x1b[Z"
+    elif name in ARROWS:
+        c = ARROWS[name]
+        data = ("\x1b[1;%d%s" % (m, c)).encode() if m > 1 else (("\x1bO" if app else "\x1b[") + c).encode()
+    elif name in KEYSEQ:
+        seq = KEYSEQ[name]
+        if name in ("delete", "pageup", "pagedown") and m > 1: data = seq[:-1] + (";%d~" % m).encode()
+        elif mods & 4 and name in ("enter", "backspace", "esc", "tab"): data = b"\x1b" + seq
+        else: data = seq
+    else:
+        if mods & 2 and len(name) == 1:
+            c = name.lower()
+            if "a" <= c <= "z": b = bytes([ord(c) - 96])
+            elif c in "[\\]^_@ ": b = bytes([{"[": 27, "\\": 28, "]": 29, "^": 30, "_": 31, "@": 0, " ": 0}[c]])
+            else: b = name.encode("utf-8")
+        else:
+            b = name.encode("utf-8")
+        data = (b"\x1b" + b) if mods & 4 else b
+    o.pty.write(data)
+    return True
+
 KEYS = {0: "backspace", 1: "enter", 2: "left", 3: "right", 4: "up", 5: "down", 6: "home", 7: "end",
         8: "pageup", 9: "pagedown", 10: "tab", 11: "shift+tab", 12: "delete", 14: "esc"}
 
@@ -296,8 +372,10 @@ def chars_to_keys(txt):
 def handle_input(r):
     pane = r.string(); r.number()                    # id, ClientInput version
     kind = r.number()
-    if kind in (1, 3):                               # text / paste: typed as keys (hc send would press Enter)
-        keys = chars_to_keys(r.string())
+    if kind in (1, 3):                               # text / paste: raw bytes through the pty, else typed as keys
+        txt = r.string()
+        if send_text(pane, txt, kind == 3): return
+        keys = chars_to_keys(txt)
         for i in range(0, len(keys), 64): kq(pane, keys[i:i + 64])
     elif kind == 0:                                  # key
         code = r.number(); ch = None
@@ -307,6 +385,7 @@ def handle_input(r):
         mods = r.byte()
         name = KEYS.get(code, ch)
         if not name: return
+        if send_key(pane, name, mods): return
         pre = ("ctrl+" if mods & 2 else "") + ("alt+" if mods & 4 else "") + ("shift+" if mods & 1 and code != 11 else "")
         if code == 15 and not (mods & 6):
             kq(pane, [name.lower() if name.isalpha() else name])
