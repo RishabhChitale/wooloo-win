@@ -232,9 +232,23 @@ def pane_cells(tid, w, rows, inner_w):
     lines = read_screen(tid, rows)
     return [[(ch if ch.isprintable() and ch else " ", 0, 0, 0, 0) for ch in line[:inner_w]] for line in lines], None
 
+def natural_width(tid):
+    """Columns a pane needs to show its PC terminal uncut: the terminal's width plus the two border cells."""
+    o = OBS.get(tid)
+    try:
+        return int(o.size[0]) + 2 if o is not None else 83
+    except Exception:
+        return 83
+
 def build_surface(terms, cols, rows):
     n = max(1, len(terms))
-    widths = [cols // n] * n; widths[-1] += cols - sum(widths)
+    need = sum(natural_width(t) for t in terms) if terms else 0
+    if cols >= need:
+        widths = [cols // n] * n; widths[-1] += cols - sum(widths)
+    else:
+        # the Mac asked for fewer columns than the PC terminals need: send the natural width, wider than asked,
+        # so the Mac sees the overflow and scales its text down to fit instead of cutting the lines
+        widths = [natural_width(t) for t in terms]; cols = need
     blank = (" ", 0, 0, 0, 0)
     grid = [[blank] * cols for _ in range(rows)]
     panes, x0, cursor = [], 0, None
