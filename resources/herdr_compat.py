@@ -23,13 +23,33 @@ def agg(ts):
         if k in st: return k
     return "unknown"
 
+_BRANCH = {}
+
+def branch_of(folder):
+    """Git branch of a folder (cached 10 s); empty when it is not a repo or git is slow."""
+    if not folder: return ""
+    now = time.time()
+    hit = _BRANCH.get(folder)
+    if hit and now - hit[0] < 10: return hit[1]
+    b = ""
+    try:
+        r = subprocess.run(["git", "-C", folder, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=3, stdin=subprocess.DEVNULL, creationflags=0x08000000)
+        if r.returncode == 0: b = r.stdout.strip()
+        if b == "HEAD": b = ""
+    except Exception:
+        b = ""
+    _BRANCH[folder] = (now, b)
+    return b
+
 def workspaces(t):
     out = []
     for i, sp in enumerate(t["spaces"], 1):
         terms = [x for tb in sp["tabs"] for x in tb["terminals"]]
         act = next((tb["id"] for tb in sp["tabs"] if tb.get("active")), sp["tabs"][0]["id"] if sp["tabs"] else None)
         out.append({"workspace_id": sp["id"], "number": i, "label": sp["name"], "focused": bool(sp.get("active")),
-                    "pane_count": len(terms), "tab_count": len(sp["tabs"]), "active_tab_id": act, "agent_status": agg(terms)})
+                    "pane_count": len(terms), "tab_count": len(sp["tabs"]), "active_tab_id": act, "agent_status": agg(terms),
+                    "branch": branch_of(sp.get("folder"))})
     return out
 
 def tabs(t):
