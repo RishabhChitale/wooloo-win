@@ -240,13 +240,16 @@ def build_surface(terms, cols, rows):
     panes, x0, cursor = [], 0, None
     fp = state.get("fp")
     focus = fp if fp in terms else (terms[0] if terms else None)
+    inner_h = max(1, rows - 2)
     for tid, w in zip(terms, widths):
-        inner_w = max(1, w - (1 if n > 1 else 0))
-        pcells, cur = pane_cells(tid, w, rows, inner_w)
+        # a box per pane: one blank border cell all round (the Mac draws the frame and title there),
+        # the terminal anchored at the top of the inside, the rest of the box left blank
+        inner_w = max(1, w - 2)
+        pcells, cur = pane_cells(tid, w, inner_h, inner_w)
         for y, line in enumerate(pcells):
-            if y >= rows: break
-            grid[y][x0:x0 + len(line)] = line
-        if cur and tid == focus: cursor = (x0 + cur[0], cur[1])
+            if y >= inner_h: break
+            grid[1 + y][x0 + 1:x0 + 1 + len(line)] = line
+        if cur and tid == focus: cursor = (x0 + 1 + cur[0], 1 + cur[1])
         panes.append((tid, x0, w))
         x0 += w
     body = b"".join(cell(*c) for row in grid for c in row)
@@ -259,7 +262,8 @@ def build_surface(terms, cols, rows):
     out += num(len(panes))
     for tid, x, w in panes:
         rect = num(x) + num(0) + num(w) + num(rows)
-        out += s(tid) + num(state["rev"]) + rect + rect + b"\x00" + b"\x00"
+        inner = num(x + 1) + num(1) + num(max(1, w - 2)) + num(max(1, rows - 2))
+        out += s(tid) + num(state["rev"]) + rect + inner + b"\x00" + b"\x00"
         out += (b"\x01" if tid == focus else b"\x00") + b"\x00\x00\x00" + num(0) + num(0)
     out += num(0)                                    # splits
     out += b"\x00"                                   # popup
