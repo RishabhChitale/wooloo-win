@@ -31,7 +31,7 @@ const SYNC_BIN: &str = "wooloo-sync.exe";
 
 /// Copy the bundled dispatcher and sync responder into the config dir (errors ignored: best effort).
 fn copy_bundled(app: &AppHandle, cfg: &std::path::Path) {
-    for name in [DISPATCHER, SYNC_BIN, "herdr_compat.py", "herdr_client.py"] {
+    for name in [DISPATCHER, SYNC_BIN, "herdr_compat.py", "herdr_client.py", "vt_mini.py"] {
         if let Ok(src) = app.path().resolve(format!("resources/{name}"), BaseDirectory::Resource) {
             // the repo carries an empty placeholder; the release build replaces it with the real binary
             if std::fs::metadata(&src).map(|m| m.len() > 0).unwrap_or(false) {
