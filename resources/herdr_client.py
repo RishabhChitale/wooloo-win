@@ -71,6 +71,9 @@ def tab_terminals(t):
                 if tb["id"] == state["tab"]: return [x["terminal"] for x in tb["terminals"]]
     if state["ws"]:
         sp_active = next((sp for sp in t["spaces"] if sp["id"] == state["ws"]), None)
+    if not state["tab"] and not state["ws"] and t["spaces"]:
+        # nothing focused yet: show the host's active tab, as a herdr server does, so the client gets a first surface
+        sp_active = next((sp for sp in t["spaces"] if sp.get("active")), t["spaces"][0])
     if sp_active:
         tb = next((tb for tb in sp_active["tabs"] if tb.get("active")), sp_active["tabs"][0] if sp_active["tabs"] else None)
         if tb: return [x["terminal"] for x in tb["terminals"]]
